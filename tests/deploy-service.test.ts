@@ -165,6 +165,16 @@ describe('DeployService.deploy', () => {
     expect(joined(result.logs)).not.toContain('NOT restored');
   });
 
+  it('does not warn when an older stash exists but nothing new was stashed', async () => {
+    fs.writeFileSync(path.join(workDir, 'CICD.txt'), 'dirty\n');
+    git(workDir, 'stash', 'save', 'older');
+
+    const result = await service.deploy(makeOptions({ dryRun: true }));
+
+    expect(result.success).toBe(true);
+    expect(joined(result.logs)).not.toContain('NOT restored');
+  });
+
   it('checks out another branch before deploying', async () => {
     git(workDir, 'branch', 'release');
     git(workDir, 'push', '-u', 'origin', 'release'); // -u: pull needs an upstream

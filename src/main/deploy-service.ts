@@ -89,6 +89,16 @@ export class DeployService {
    * `git diff --cached --quiet` exits 1 when there ARE staged changes, which is a normal result
    * (not an error), so it cannot go through runGit. Any other failure is rethrown.
    */
+  /** Hash of the newest stash entry ('' when there is none or git fails). Silent: not written to the log. */
+  private async getTopStash(cwd: string): Promise<string> {
+    try {
+      const { stdout } = await execFileAsync('git', ['stash', 'list', '--format=%H', '-1'], this.getGitOptions(cwd));
+      return stdout.toString().trim();
+    } catch {
+      return '';
+    }
+  }
+
   private async hasStagedChanges(pathspec: string, cwd: string, logs: string[]): Promise<boolean> {
     this.log(`$ git diff --cached --quiet -- ${pathspec}`, logs);
     try {
@@ -143,12 +153,14 @@ export class DeployService {
       cicdPathspec = relativeCicd.split(path.sep).join('/');
 
       // Git operations
-      const stashOutput = await this.runGitOutput(['stash', 'save', 'Auto stash before deploy'], repoPath, logs);
-      if (stashOutput === null) {
+      const stashBefore = await this.getTopStash(repoPath);
+      if (!(await this.runGit(['stash', 'save', 'Auto stash before deploy'], repoPath, logs))) {
         throw new Error('Git stash failed');
       }
-      // Log-only warning: the stash is intentionally never popped (documented behavior)
-      if (!/no local changes/i.test(stashOutput)) {
+      // Log-only warning: the stash is intentionally never popped (documented behavior).
+      // Compare the top stash hash instead of parsing git's (localizable) output.
+      const stashAfter = await this.getTopStash(repoPath);
+      if (stashAfter && stashAfter !== stashBefore) {
         this.log('⚠ Local changes were stashed and NOT restored. Run `git stash pop` in the repo to get them back.', logs);
       }
 
