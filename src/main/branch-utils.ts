@@ -65,12 +65,14 @@ export async function getRemoteBranches(repoPath: string, signal?: AbortSignal):
   const git = async (...args: string[]): Promise<string> => (await execFileAsync('git', args, gitOptions)).stdout.toString().trim();
 
   try {
+    let insideWorkTree = false;
     try {
-      await git('rev-parse', '--is-inside-work-tree');
+      // Exits 0 and prints "false" inside .git or a bare repo, so check the output too
+      insideWorkTree = (await git('rev-parse', '--is-inside-work-tree')) === 'true';
     } catch (err: unknown) {
       if (signal?.aborted) throw err;
-      return { branches: [], error: `Not a git repository: ${repoPath}` };
     }
+    if (!insideWorkTree) return { branches: [], error: `Not a git repository: ${repoPath}` };
 
     const remotes = (await git('remote')).split('\n').map((r) => r.trim());
     let upstreamRemote: string | null = null;
@@ -96,7 +98,7 @@ export async function getRemoteBranches(repoPath: string, signal?: AbortSignal):
       error = `Could not fetch from "${remote}", showing cached branches: ${String(getGitErrorMessage(err)).trim()}`;
     }
 
-    const branches = parseRemoteBranches(await git('branch', '-r'), remote);
+    const branches = parseRemoteBranches(await git('branch', '-r', '--no-color'), remote);
     return error ? { branches, error } : { branches };
   } catch (err: unknown) {
     // Aborted by the user or superseded by a newer request: not an error
