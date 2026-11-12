@@ -29,13 +29,8 @@ export class WindowManager {
 
     win.on('closed', () => {
       this.windows.delete(win);
-      // Clean up active deployments for this window
-      for (const [project, windowId] of this.activeDeployments.entries()) {
-        if (windowId === win.id) {
-          this.activeDeployments.delete(project);
-          this.broadcastDeploymentStatus();
-        }
-      }
+      // Active deployments are released by the start-deploy handler when the deploy finishes,
+      // even if the window that started it is already closed
     });
 
     this.windows.add(win);
@@ -54,9 +49,9 @@ export class WindowManager {
     return Array.from(this.windows);
   }
 
-  canDeploy(projectName: string, windowId: number): boolean {
-    const activeWindowId = this.activeDeployments.get(projectName);
-    return !activeWindowId || activeWindowId === windowId;
+  canDeploy(projectName: string, _windowId?: number): boolean {
+    // A project can only run one deploy at a time, regardless of which window started it
+    return !this.activeDeployments.has(projectName);
   }
 
   setDeploymentActive(projectName: string, windowId: number): void {

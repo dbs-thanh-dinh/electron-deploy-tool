@@ -325,9 +325,12 @@ function updateDeployButtonState() {
   const projectName = projectSelect.value;
   const isProjectBeingDeployed = projectName && activeDeployments.includes(projectName);
 
-  if (isProjectBeingDeployed) {
+  if (isDeploying) {
     deployBtn.disabled = true;
-    deployBtn.querySelector(".btn-text")!.textContent = `${projectName} is being deployed in another window`;
+    deployBtn.querySelector(".btn-text")!.textContent = "Deploying...";
+  } else if (isProjectBeingDeployed) {
+    deployBtn.disabled = true;
+    deployBtn.querySelector(".btn-text")!.textContent = `${projectName} is being deployed`;
   } else if (projectName && branchSelect.value && envSelect.value && typeSelect.value) {
     deployBtn.disabled = false;
     deployBtn.querySelector(".btn-text")!.textContent = "Start Deploy";
@@ -387,9 +390,22 @@ function clearLogOutput() {
 }
 
 async function handleDeploy() {
-  // Clear previous logs
-  clearLogOutput();
+  if (isDeploying) return;
+  isDeploying = true;
+  updateDeployButtonState();
 
+  try {
+    await runDeploy();
+  } finally {
+    isDeploying = false;
+    updateDeployButtonState();
+    if (pendingConfigRefresh) {
+      refreshConfigFromOtherWindow();
+    }
+  }
+}
+
+async function runDeploy() {
   const projectSelect = document.getElementById("projectSelect") as HTMLSelectElement;
   const branchSelect = document.getElementById("branchSelect") as HTMLSelectElement;
   const envSelect = document.getElementById("envSelect") as HTMLSelectElement;
@@ -411,7 +427,7 @@ async function handleDeploy() {
   // Check if can deploy
   const canDeploy = await window.api.canDeploy(projectName);
   if (!canDeploy) {
-    alert(`Project ${projectName} is already being deployed in another window`);
+    alert(`Project ${projectName} is already being deployed`);
     return;
   }
 
