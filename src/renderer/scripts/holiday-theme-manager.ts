@@ -405,6 +405,7 @@ class HolidayThemeManager {
    */
   private lunarToSolar(lunarDay: number, lunarMonth: number, solarYear: number): LunarDate | null {
     // This is a simplified conversion table for common Vietnamese holidays
+    // TODO: 3/10 for 2028-2030 (4/5, 4/24, 4/13) looks off by 1-2 days; verify or use a lunar calendar library
     // For accurate conversion, you should use a proper lunar calendar library
 
     const conversionTable: { [key: string]: { [year: number]: string } } = {
@@ -422,7 +423,7 @@ class HolidayThemeManager {
         // Giỗ Tổ Hùng Vương
         2024: "4/18",
         2025: "4/7",
-        2026: "4/27",
+        2026: "4/26",
         2027: "4/16",
         2028: "4/5",
         2029: "4/24",
