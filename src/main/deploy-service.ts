@@ -85,13 +85,14 @@ export class DeployService {
       fileContent = fileContent.replace(/\{type\}\s*,\s*|\s*,\s*\{type\}/gi, "");
     }
     const now = new Date();
-    const dateDMY = `${now.getDate()}-${now.getMonth() + 1}-${now.getFullYear()}`
-    const dateYMD = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`
+    const yyyy = String(now.getFullYear());
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
     return fileContent
-      .replace('{date:y-m-d}', dateYMD)
-      .replace('{date:y/m/d}', dateYMD)
-      .replace('{date:d-m-y}', dateDMY)
-      .replace('{date:d/m/y}', dateDMY)
+      .replace('{date:y-m-d}', `${yyyy}-${mm}-${dd}`)
+      .replace('{date:y/m/d}', `${yyyy}/${mm}/${dd}`)
+      .replace('{date:d-m-y}', `${dd}-${mm}-${yyyy}`)
+      .replace('{date:d/m/y}', `${dd}/${mm}/${yyyy}`)
       .replace('{env}', env)
       .replace('{type}', type);
   }
