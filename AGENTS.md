@@ -2,6 +2,30 @@
 
 Hướng dẫn cho AI coding agent làm việc trong repo này. Giao tiếp với người dùng bằng **tiếng Việt**; comment trong code có thể giữ tiếng Anh.
 
+## Nguyên tắc chung
+
+### Trách nhiệm của Agent
+
+- Agent chịu trách nhiệm **vừa triển khai vừa ghi tài liệu** dự án.
+- Mục tiêu: luôn ghi lại các quyết định triển khai thành tài liệu tại `docs/notes/<YYYY-MM>.md` (danh mục nằm ở `docs/implementation-notes.md`). Nếu file/thư mục chưa có thì agent tự tạo theo mẫu bên dưới.
+- Không bao giờ **âm thầm** đưa ra quyết định kiến trúc — mọi quyết định phải để lại dấu vết kiểm toán (audit trail).
+- Với quyết định kiến trúc: hỏi người dùng (multiple choice, có lựa chọn Recommended) và gọi sub-agent `advisor` **trước** khi triển khai, rồi mới ghi note.
+
+### Khi nào ghi note
+
+- **Ghi** khi: quyết định kiến trúc, thay đổi hành vi của deploy/IPC/config, đánh đổi kỹ thuật, hoặc lệch khỏi quy ước trong file này.
+- **Không ghi** cho thay đổi nhỏ: sửa typo, chỉnh định dạng, bump version.
+
+### Định dạng
+
+- Mỗi tháng một file `docs/notes/<YYYY-MM>.md`; mỗi quyết định là một mục `## <YYYY-MM-DD> — <tiêu đề ngắn>` gồm: **Bối cảnh**, **Quyết định**, **Phương án đã cân nhắc**, **Lý do**, **Liên quan** (file/PR).
+- `docs/implementation-notes.md` là danh mục: mỗi tháng một dòng link tới file note tương ứng. Tạo file tháng mới thì thêm dòng vào danh mục.
+- File note commit cùng PR với thay đổi code (hoặc commit riêng dạng `docs: ...`).
+
+### Tầm quan trọng của ghi tài liệu
+
+Ghi tài liệu giúp minh bạch quá trình phát triển, review lại quyết định về sau, giúp thành viên mới hiểu lý do đằng sau mỗi quyết định, và tạo lịch sử kiểm toán (audit trail) hoàn chỉnh.
+
 ## Tổng quan
 
 **Deploy Tool** (`deploy-tool`, v1.3.0) là ứng dụng desktop Electron + TypeScript (chỉ Windows) tự động hoá quy trình deploy qua Git: với mỗi project đã cấu hình, tool sẽ `git stash` → `git checkout <branch>` → `git pull` → ghi một dòng vào file CI/CD (mặc định `CICD.txt`) → `git add` → `git commit` → `git push` (hoặc bỏ qua push ở chế độ dry-run). Push lên nhánh sẽ kích hoạt pipeline CI/CD của repo đích.
@@ -48,6 +72,9 @@ extra/                       # Dữ liệu mẫu, được copy vào resources k
 ├── scripts.json             # Config mẫu các project
 └── holidays-config.json     # Danh sách ngày lễ + theme
 assets/                      # icon.ico, assets/holidays/*.png|jpg (ảnh nền ngày lễ)
+docs/                        # Tài liệu quyết định triển khai (không đóng gói vào app)
+├── implementation-notes.md  # Danh mục các file note theo tháng
+└── notes/<YYYY-MM>.md       # Ghi chú quyết định triển khai của từng tháng
 dist/, release/              # Output build — bị gitignore, không sửa tay
 ```
 
