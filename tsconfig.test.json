@@ -4,5 +4,5 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["tests/**/*", "src/main/deploy-utils.ts"]
+  "include": ["tests/**/*", "src/main/deploy-utils.ts", "src/main/config-utils.ts"]
 }

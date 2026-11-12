@@ -101,6 +101,11 @@ function initTheme() {
 
 // ===== DEPLOY PAGE =====
 let currentConfig: ConfigI | null = null;
+
+// A valid scripts.json may contain an unrelated top-level "error" key, so also require `projects` to be missing
+function isConfigError(config: ConfigI | ConfigErrorI): config is ConfigErrorI {
+  return typeof (config as ConfigErrorI).error === "string" && !Array.isArray((config as Partial<ConfigI>).projects);
+}
 let activeDeployments: string[] = [];
 let allBranches: string[] = []; // Store all branches for filtering
 let isDeploying = false; // A deploy started from this window is in progress
@@ -227,7 +232,15 @@ async function initDeployPage() {
 
 async function loadDeployConfig() {
   try {
-    currentConfig = await window.api.loadConfig();
+    const config = await window.api.loadConfig();
+    if (isConfigError(config)) {
+      // Alert only here: the projects page loads the same config and reports to the console
+      currentConfig = null;
+      console.error("Failed to load config:", config.error);
+      alert(`Failed to load configuration: ${config.error}`);
+    } else {
+      currentConfig = config;
+    }
     populateProjectSelect();
   } catch (err) {
     console.error("Failed to load config:", err);
@@ -496,6 +509,7 @@ function setFormEnabled(enabled: boolean) {
 
 // ===== PROJECTS PAGE =====
 let projectsConfig: ConfigI | null = null;
+let projectsConfigError: string | null = null; // Why projectsConfig is null after the last load
 let editingProjectIndex: number | null = null;
 
 async function initProjectsPage() {
@@ -506,8 +520,17 @@ async function initProjectsPage() {
 
 async function loadProjectsConfig() {
   try {
-    projectsConfig = await window.api.loadConfig();
+    const config = await window.api.loadConfig();
+    if (isConfigError(config)) {
+      projectsConfig = null;
+      projectsConfigError = config.error;
+      console.error("Failed to load config:", config.error);
+    } else {
+      projectsConfig = config;
+      projectsConfigError = null;
+    }
   } catch (err) {
+    projectsConfigError = (err as Error).message;
     console.error("Failed to load config:", err);
     alert("Failed to load configuration");
   }
@@ -516,6 +539,14 @@ async function loadProjectsConfig() {
 function renderProjectsList() {
   const container = document.getElementById("projectsList") as HTMLDivElement;
   container.innerHTML = "";
+
+  // Adding is pointless (and saving is blocked) while the config is not loaded
+  (document.getElementById("addProjectBtn") as HTMLButtonElement).disabled = projectsConfig === null;
+
+  if (projectsConfig === null && projectsConfigError) {
+    container.innerHTML = `<p style="color: var(--danger, #e5534b); text-align: center; padding: 40px;">Failed to load configuration: ${escapeHtml(projectsConfigError)}<br>Fix scripts.json and reload (Ctrl+R).</p>`;
+    return;
+  }
 
   if (!projectsConfig?.projects || projectsConfig.projects.length === 0) {
     container.innerHTML =
@@ -636,8 +667,13 @@ async function deleteProject(index: number) {
   if (editingProjectIndex !== null) {
     hideForm();
   }
-  projectsConfig!.projects.splice(index, 1);
-  await saveProjectsConfig();
+  const cfg = projectsConfig!;
+  const snapshot = structuredClone(cfg.projects);
+  cfg.projects.splice(index, 1);
+  if (!(await saveProjectsConfig())) {
+    // Skip if another window's update replaced the config while saving
+    if (projectsConfig === cfg) cfg.projects = snapshot;
+  }
   renderProjectsList();
 }
 
@@ -725,6 +761,9 @@ async function saveProject() {
     return;
   }
 
+  // Keep a snapshot so a rejected save does not leave unsaved changes in memory
+  const cfg = projectsConfig;
+  const snapshot = structuredClone(cfg.projects);
   if (editingProjectIndex !== null) {
     // Edit existing
     projectsConfig.projects[editingProjectIndex] = project;
@@ -733,7 +772,11 @@ async function saveProject() {
     projectsConfig.projects.push(project);
   }
 
-  await saveProjectsConfig();
+  if (!(await saveProjectsConfig())) {
+    // Skip if another window's update replaced the config while saving
+    if (projectsConfig === cfg) cfg.projects = snapshot;
+    return; // keep the form open so the user can fix the input
+  }
   hideForm();
   renderProjectsList();
 }
@@ -785,14 +828,18 @@ async function handleFileContentFormatSelectChange() {
   }
 }
 
-async function saveProjectsConfig() {
+// Returns true when the config was saved
+async function saveProjectsConfig(): Promise<boolean> {
   try {
     const result = await window.api.saveConfig(projectsConfig!);
     if (!result.success) {
       alert(`Failed to save config: ${result.error}`);
+      return false;
     }
+    return true;
   } catch (err: unknown) {
     alert(`Error saving config: ${(err as Error).message}`);
+    return false;
   }
 }
 
