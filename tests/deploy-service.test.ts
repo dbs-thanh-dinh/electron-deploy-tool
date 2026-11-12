@@ -149,6 +149,22 @@ describe('DeployService.deploy', () => {
     expect(git(workDir, 'show', '--name-only', '--format=', 'HEAD')).toBe('ci/CICD[1].txt');
   });
 
+  it('warns in the log when local changes were stashed (and does not pop them)', async () => {
+    fs.writeFileSync(path.join(workDir, 'CICD.txt'), 'dirty\n');
+
+    const result = await service.deploy(makeOptions({ dryRun: true }));
+
+    expect(result.success).toBe(true);
+    expect(joined(result.logs)).toContain('NOT restored');
+    expect(git(workDir, 'stash', 'list')).toContain('Auto stash before deploy');
+  });
+
+  it('does not warn about a stash when there were no local changes', async () => {
+    const result = await service.deploy(makeOptions({ dryRun: true }));
+
+    expect(joined(result.logs)).not.toContain('NOT restored');
+  });
+
   it('checks out another branch before deploying', async () => {
     git(workDir, 'branch', 'release');
     git(workDir, 'push', '-u', 'origin', 'release'); // -u: pull needs an upstream

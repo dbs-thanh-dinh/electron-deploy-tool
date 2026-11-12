@@ -143,8 +143,13 @@ export class DeployService {
       cicdPathspec = relativeCicd.split(path.sep).join('/');
 
       // Git operations
-      if (!(await this.runGit(['stash', 'save', 'Auto stash before deploy'], repoPath, logs))) {
+      const stashOutput = await this.runGitOutput(['stash', 'save', 'Auto stash before deploy'], repoPath, logs);
+      if (stashOutput === null) {
         throw new Error('Git stash failed');
+      }
+      // Log-only warning: the stash is intentionally never popped (documented behavior)
+      if (!/no local changes/i.test(stashOutput)) {
+        this.log('⚠ Local changes were stashed and NOT restored. Run `git stash pop` in the repo to get them back.', logs);
       }
 
       const currentBranch = await this.runGitOutput(['rev-parse', '--abbrev-ref', 'HEAD'], repoPath, logs);
