@@ -77,7 +77,8 @@ function getGitHubConfig(): { owner: string; repo: string } | null {
 function initAutoUpdate() {
   const githubConfig = getGitHubConfig();
   autoUpdater.autoDownload = false;
-  autoUpdater.forceDevUpdateConfig = true;
+  // Only needed to test updates from an unpackaged dev run
+  autoUpdater.forceDevUpdateConfig = !app.isPackaged;
   autoUpdater.allowPrerelease = true;
 
   autoUpdater.on("update-available", (info) => {
