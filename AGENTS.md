@@ -37,7 +37,7 @@ Tính năng chính: nhiều cửa sổ (chặn deploy trùng project), quản l�
 - Electron `^28`, TypeScript `^5.3` (strict, target ES2020, module `commonjs`)
 - `electron-updater` (GitHub provider), `electron-builder` (đóng gói MSI + NSIS, x64)
 - Renderer là HTML/CSS + TypeScript thuần (không framework, không bundler)
-- Không có test, không có linter/formatter được cấu hình
+- Test: Vitest (`tests/`); lint: ESLint flat config (`eslint.config.mjs`, typescript-eslint). Không cấu hình Prettier/formatter
 
 ## Lệnh thường dùng
 
@@ -47,9 +47,12 @@ npm run build      # tsc + copy-static (copy html/css từ src/renderer sang dis
 npm start          # build rồi chạy electron .
 npm run watch      # tsc --watch (HTML/CSS không được copy lại — chạy copy-static khi đổi)
 npm run dist       # build + electron-builder --win msi --x64 -> output ở release/
+npm run typecheck  # tsc --noEmit (src) + tsc --noEmit -p tsconfig.test.json (tests)
+npm test           # vitest run
+npm run lint       # eslint src tests (cảnh báo `no-explicit-any`/unused là warn, chỉ lỗi mới làm fail)
 ```
 
-Không có `npm test` / `npm run lint`. Kiểm tra tối thiểu: `npx tsc --noEmit` phải pass.
+Kiểm tra tối thiểu trước khi tạo PR: `npm run typecheck`, `npm test`, `npm run lint` phải pass (0 lỗi).
 
 ## Cấu trúc thư mục
 
@@ -60,11 +63,12 @@ src/
 │   ├── window-manager.ts    # WindowManager: tạo cửa sổ, theo dõi deploy đang chạy (project -> windowId), broadcast
 │   ├── ipc-handlers.ts      # registerIpcHandlers(): toàn bộ ipcMain.handle (config, deploy, log, git, dialog, holidays)
 │   ├── deploy-service.ts    # DeployService: chạy lệnh git, ghi log, cập nhật file CICD
+│   ├── deploy-utils.ts      # Hàm thuần (commit msg, nội dung file, applyCicdEntry) — không import electron, có unit test
 │   └── interface.ts         # ProjectI, ConfigI
 ├── preload/preload.ts       # contextBridge: expose `window.api`
 └── renderer/                # Renderer process (UI)
     ├── index.html           # Toàn bộ markup; nạp script từ ../../dist/renderer/scripts/*.js
-    ├── types.d.ts           # Khai báo kiểu cho `window.api`
+    ├── types.d.ts           # Khai báo kiểu cho `window.api` (global script, xem lưu ý bên dưới)
     ├── scripts/renderer.ts  # Logic UI chính (~800 dòng)
     ├── scripts/holiday-theme-manager.ts  # Theme/animation theo ngày lễ (solar + lunar)
     └── styles/              # main.css, themes.css (dark/light), holiday-theme.css
@@ -75,6 +79,7 @@ assets/                      # icon.ico, assets/holidays/*.png|jpg (ảnh nền 
 docs/                        # Tài liệu quyết định triển khai (không đóng gói vào app)
 ├── implementation-notes.md  # Danh mục các file note theo tháng
 └── notes/<YYYY-MM>.md       # Ghi chú quyết định triển khai của từng tháng
+tests/                       # Unit test Vitest (ngoài `src/` nên không bị build vào dist)
 dist/, release/              # Output build — bị gitignore, không sửa tay
 ```
 
@@ -85,7 +90,7 @@ dist/, release/              # Output build — bị gitignore, không sửa tay
 - Sự kiện main → renderer (`deployment-status-changed`, `config-updated`, `update-available`, `show-about`) được gửi bằng `webContents.send` và đăng ký qua `window.api.onXxx`.
 - **Chặn deploy trùng:** `WindowManager.activeDeployments` (Map projectName → windowId). `start-deploy` kiểm tra `canDeploy`, đánh dấu active, và luôn `setDeploymentInactive` trong `finally`; mỗi lần đổi đều broadcast tới mọi cửa sổ.
 - **Config người dùng:** `<userData>/scripts.json`. Lần đầu chưa có thì copy từ `extra/scripts.json` (fallback `configDefault`). Khi load, `load-config` điền giá trị mặc định cho các field thiếu của `ProjectI`. `save-config` ghi file rồi `broadcastConfigUpdate()` để đồng bộ các cửa sổ.
-- **Log deploy:** `<userData>/logs/deploy-YYYY-MM-DD.log`, mỗi dòng có timestamp ISO; đồng thời trả mảng `logs` về renderer.
+- **Log deploy:** `<userData>/logs/deploy-YYYY-MM-DD.log`, mỗi dòng có timestamp giờ local `YYYY-MM-DD HH:mm:ss` (tên file cũng theo ngày local); đồng thời trả mảng `logs` về renderer.
 - **File `extra/`:** `getExtraFilePath()` đọc từ `process.resourcesPath/extra` khi đã đóng gói, từ `<cwd>/extra` khi dev.
 - **Auto-update:** `autoDownload = false`; chỉ gửi `update-available` kèm link release GitHub (đọc `owner/repo` từ `package.json > build.publish`). `forceDevUpdateConfig = true`, `allowPrerelease = true`.
 - **Theme ngày lễ:** `HolidayThemeManager` đọc `holidays-config.json` (qua IPC `load-holidays-config`), hỗ trợ ngày dương (`solar`) và âm (`lunar`) định dạng `"M/D"`, cửa sổ hiệu lực `daysBefore`/`daysAfter`, mỗi holiday có `theme.backgroundImage` + `theme.animations`, cờ `enabled`.
@@ -102,7 +107,7 @@ dist/, release/              # Output build — bị gitignore, không sửa tay
 
 Theo quy ước global của chủ dự án (ThanhDC):
 
-- Hạn chế `any` (code hiện tại còn dùng ở IPC/preload — không mở rộng thêm, ưu tiên khai báo kiểu cụ thể khi sửa vùng đó).
+- Hạn chế `any`, không thêm `any` mới (ESLint `no-explicit-any` ở mức warn). Với lỗi bắt được ưu tiên `catch (err: unknown)` rồi `(err as Error).message`.
 - Biến/hàm `camelCase`; class/type `PascalCase`; thư mục và file `kebab-case`.
 - Model/DTO/RO kèm hậu tố `Model`/`DTO`/`RO`.
 - Quy ước chủ dự án muốn là interface bắt đầu bằng `I` (vd `IExample`). **Lưu ý:** code hiện có dùng hậu tố (`ProjectI`, `ConfigI`) và `DeployOptions`/`DeployResult` không có tiền tố — giữ nhất quán với file đang sửa; chỉ dùng `I`-prefix cho interface mới nếu người dùng yêu cầu rõ.
@@ -114,10 +119,11 @@ Theo quy ước global của chủ dự án (ThanhDC):
 - **Không commit** `.env`, `dist/`, `release/`, `node_modules/` (đã gitignore). Không sửa tay `dist/`.
 - `index.html` nạp JS từ `../../dist/renderer/scripts/`, còn `main` trỏ `dist/main/main.js` → **luôn `npm run build` trước khi chạy Electron**; chỉ sửa `.ts`/`.html`/`.css` trong `src/`.
 - `copy-static` chỉ copy `html`/`css`; file tĩnh khác (ảnh, json) nằm ngoài `src/` và được nạp qua `assets/` / `extra/`. `build.files` gồm `dist/**`, `src/renderer/**`, `assets/**`; `extra/` đóng gói qua `extraResources`.
-- `DeployService` dùng `execSync` với chuỗi lệnh nối từ input người dùng (`branch`, `commitMsg`, `cicdFileName` đưa trực tiếp vào shell, commit message bọc trong `"..."`). Khi sửa, cẩn thận command injection/ký tự đặc biệt; ưu tiên `execFileSync` với mảng tham số nếu refactor.
+- `DeployService` chạy git qua `execFile` với mảng tham số (không qua shell), có timeout 5 phút và `GIT_TERMINAL_PROMPT=0`; `branch` bắt đầu bằng `-` và `cicdFileName` thoát khỏi repo bị từ chối. Giữ cách gọi này khi sửa, không quay lại nối chuỗi lệnh.
+- **Không thêm `import`/`export` top-level vào `src/renderer/scripts/*.ts` hay `src/renderer/types.d.ts`**: renderer là script thường (không bundler); thêm import biến file thành module, tsc (commonjs) sinh `exports` và trình duyệt lỗi `exports is not defined`, riêng `types.d.ts` sẽ làm `Window` hết global. Muốn dùng kiểu của main process thì dùng inline `import('../main/...')` (xem đầu `types.d.ts`). `src/preload/preload.ts` chỉ được `import type` từ main.
 - `git stash save` chạy trước checkout mà **không** `stash pop` lại — đây là hành vi hiện tại, đừng thay đổi âm thầm.
-- `getBranches` chạy `git fetch --prune` + `git branch -r` đồng bộ trong main process (có thể chặn UI nếu repo/mạng chậm).
-- `load-config` ở nhánh "chưa có file" trả về **đường dẫn** (khi copy từ sample) thay vì object config — hành vi không nhất quán với các nhánh khác; kiểm tra phía renderer khi đụng vào.
+- `get-branches` chạy `git fetch --prune` + `git branch -r` bằng `execFile` bất đồng bộ (timeout 2 phút) nên không chặn main process, nhưng UI vẫn phải chờ; lỗi thì trả mảng rỗng. Chỉ bỏ tiền tố `origin/`.
+- `load-config` luôn trả object config; khi lỗi trả `{ error: message }` (không có `projects`). Kiểu `window.api.loadConfig` hiện khai báo `ConfigI & { error?: string }` nên chưa phản ánh nhánh lỗi, renderer cũng chưa xử lý `error`.
 - Đường dẫn ảnh nền trong `holidays-config.json` là tương đối so với renderer (`./../../assets/holidays/...`); giữ nguyên format khi thêm ngày lễ mới và đặt ảnh vào `assets/holidays/`.
 - README còn mô tả cũ (`scripts.json` ở thư mục gốc); thực tế config nằm ở `<userData>/scripts.json`, mẫu ở `extra/scripts.json`.
 
@@ -125,5 +131,5 @@ Theo quy ước global của chủ dự án (ThanhDC):
 
 - Nhánh chính `main`; không push trực tiếp lên `main`/`master` — làm trên nhánh `feature/*`, `release/*` rồi tạo PR.
 - Commit theo Conventional Commits (`feat:`, `fix:`, `chore:`…). **Không** thêm `Co-Authored-By` hay trailer ghi công AI/“Generated with…” vào commit message và mô tả PR.
-- Trước khi tạo PR: chạy `npx tsc --noEmit` (và lint/test nếu sau này được thêm).
+- Trước khi tạo PR: chạy `npm run typecheck`, `npm test` và `npm run lint` (`npx tsc --noEmit` một mình không kiểm tra `tests/`).
 - Release: bump `version` trong `package.json` (commit `chore: bump version to x.y.z`), build bằng `npm run dist`, publish lên GitHub Releases (`dbs-thanhdc/electron-deploy-tool`) để `electron-updater` phát hiện.
