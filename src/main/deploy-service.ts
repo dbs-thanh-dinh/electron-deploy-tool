@@ -51,34 +51,69 @@ export class DeployService {
     }
   }
 
-  private async runGit(args: string[], cwd: string, logs: string[]): Promise<boolean> {
+  private getGitOptions(cwd: string) {
+    return {
+      cwd,
+      encoding: 'utf8' as const,
+      timeout: GIT_TIMEOUT_MS,
+      windowsHide: true,
+      // Literal pathspecs: a CICD file name like "CICD[1].txt" must not be treated as a glob/magic by add/diff/checkout
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' },
+    };
+  }
+
+  /** Runs git, logs the command and its output. Returns trimmed stdout, or null when git fails. */
+  private async runGitOutput(args: string[], cwd: string, logs: string[]): Promise<string | null> {
     try {
       this.log(`$ git ${args.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`, logs);
-      const { stdout } = await execFileAsync('git', args, {
-        cwd,
-        encoding: 'utf8',
-        timeout: GIT_TIMEOUT_MS,
-        windowsHide: true,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-      });
+      const { stdout } = await execFileAsync('git', args, this.getGitOptions(cwd));
 
       const output = stdout.toString().trim();
       if (output) {
         this.log(output, logs);
       }
-      return true;
+      return output;
     } catch (err: unknown) {
       this.log(`❌ Error running: git ${args[0]}`, logs);
       // String() keeps the original output ("undefined") when the error carries no message
       this.log(String(getGitErrorMessage(err)), logs);
-      return false;
+      return null;
     }
+  }
+
+  private async runGit(args: string[], cwd: string, logs: string[]): Promise<boolean> {
+    return (await this.runGitOutput(args, cwd, logs)) !== null;
+  }
+
+  /**
+   * `git diff --cached --quiet` exits 1 when there ARE staged changes, which is a normal result
+   * (not an error), so it cannot go through runGit. Any other failure is rethrown.
+   */
+  private async hasStagedChanges(pathspec: string, cwd: string, logs: string[]): Promise<boolean> {
+    this.log(`$ git diff --cached --quiet -- ${pathspec}`, logs);
+    try {
+      await execFileAsync('git', ['diff', '--cached', '--quiet', '--', pathspec], this.getGitOptions(cwd));
+      return false;
+    } catch (err: unknown) {
+      if ((err as { code?: unknown }).code === 1) return true;
+      throw err;
+    }
+  }
+
+  /** Best-effort: restores the CICD file (index + worktree) to HEAD. Never throws. */
+  private async rollbackCicdFile(pathspec: string, cwd: string, logs: string[]): Promise<void> {
+    this.log(`↩️ Rolling back ${pathspec} to HEAD`, logs);
+    const ok = await this.runGit(['checkout', 'HEAD', '--', pathspec], cwd, logs);
+    this.log(ok ? `✓ Rolled back ${pathspec}` : `⚠️ Rollback failed, please check ${pathspec} manually`, logs);
   }
 
   async deploy(options: DeployOptions): Promise<DeployResult> {
     const logs: string[] = [];
     const { project, branch, env, type, dryRun, commitTemplate, fileContentTemplate } = options;
     const repoPath = project.repoPath;
+    let cicdPathspec: string | null = null;
+    let cicdWritten = false;
+    let committed = false;
 
     try {
       this.log('=========================================================', logs);
@@ -104,40 +139,49 @@ export class DeployService {
         throw new Error(`Invalid CICD file name: ${project.cicdFileName}`);
       }
 
+      // Same pathspec (forward slashes) for add / diff / checkout
+      cicdPathspec = relativeCicd.split(path.sep).join('/');
+
       // Git operations
       if (!(await this.runGit(['stash', 'save', 'Auto stash before deploy'], repoPath, logs))) {
         throw new Error('Git stash failed');
       }
 
-      const { stdout: currentBranchOut } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-        cwd: repoPath,
-        encoding: 'utf8',
-        windowsHide: true,
-      });
-      const currentBranch = currentBranchOut.toString().trim();
+      const currentBranch = await this.runGitOutput(['rev-parse', '--abbrev-ref', 'HEAD'], repoPath, logs);
+      if (currentBranch === null) {
+        throw new Error('Git rev-parse failed');
+      }
       if (currentBranch === branch) {
         this.log(`Current branch: ${currentBranch}`, logs);
       } else if (!(await this.runGit(['checkout', branch], repoPath, logs))) {
         throw new Error('Git checkout failed');
       }
 
-      if (!(await this.runGit(['pull'], repoPath, logs))) {
+      // --ff-only: never create a merge commit or leave the repo in a conflicted state
+      if (!(await this.runGit(['pull', '--ff-only'], repoPath, logs))) {
+        this.log('ℹ️ Pull failed. Common causes: the local branch cannot fast-forward (e.g. unpushed local commits from a previous deploy or dry-run), no upstream branch, or a network/auth problem.', logs);
         throw new Error('Git pull failed');
       }
 
       // Update CICD.txt
       const cicdFileContent = getFileContent(fileContentTemplate, env, type);
       this.updateCICDFile(logs, project, cicdFileContent);
+      cicdWritten = true;
       
       // Commit
-      if (!(await this.runGit(['add', '--', project.cicdFileName], repoPath, logs))) {
+      if (!(await this.runGit(['add', '--', cicdPathspec], repoPath, logs))) {
         throw new Error('Git add failed');
+      }
+
+      if (!(await this.hasStagedChanges(cicdPathspec, repoPath, logs))) {
+        throw new Error(`Nothing to commit: ${cicdPathspec} has no changes`);
       }
       
       const commitMsg = getCommitMsg(commitTemplate, env, type);
       if (!(await this.runGit(['commit', '-m', commitMsg], repoPath, logs))) {
         throw new Error('Git commit failed');
       }
+      committed = true;
 
       // Push (if not dry-run)
       if (dryRun) {
@@ -145,6 +189,7 @@ export class DeployService {
         this.log('✅ SUCCESS: Dry-run completed (no push)', logs);
       } else {
         if (!(await this.runGit(['push'], repoPath, logs))) {
+          this.log('ℹ️ The commit was created locally but NOT pushed. Fix the push problem and push manually, or the next deploy will need to fast-forward.', logs);
           throw new Error('Git push failed');
         }
         this.log('✅ SUCCESS: Deploy completed!', logs);
@@ -154,6 +199,10 @@ export class DeployService {
     } catch (err: unknown) {
       const message = (err as Error).message;
       this.log(`❌ Deploy failed: ${message}`, logs);
+      // Only roll back while nothing was committed; a created commit is left untouched
+      if (cicdWritten && !committed && cicdPathspec) {
+        await this.rollbackCicdFile(cicdPathspec, repoPath, logs);
+      }
       return { success: false, logs, error: message };
     } finally {
       this.log('', logs);
