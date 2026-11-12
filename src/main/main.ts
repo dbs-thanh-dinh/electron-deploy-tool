@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { autoUpdater } from 'electron-updater';
 
 let windowManager: WindowManager;
+let updateCheckTimer: NodeJS.Timeout | undefined;
 
 function createMenu() {
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -119,7 +120,11 @@ app.whenReady().then(() => {
   });
 
   // Check for updates every 4 hours
-  setInterval(checkForUpdates, 4 * 60 * 60 * 1000);
+  updateCheckTimer = setInterval(checkForUpdates, 4 * 60 * 60 * 1000);
+});
+
+app.on('will-quit', () => {
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
 });
 
 app.on('window-all-closed', () => {

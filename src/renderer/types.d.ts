@@ -1,20 +1,42 @@
-// Type declarations for renderer process
+// Type declarations for renderer process.
+// NOTE: keep this file a global script (no top-level import/export), otherwise `Window` stops being global.
+// Types shared with the main process are re-exposed through inline import() types.
+type ProjectI = import('../main/interface').ProjectI;
+type ConfigI = import('../main/interface').ConfigI;
+type DeployOptions = import('../main/deploy-service').DeployOptions;
+// start-deploy can fail before running (e.g. duplicate deploy), in which case there are no logs
+type StartDeployResult = Omit<import('../main/deploy-service').DeployResult, 'logs'> & { logs?: string[] };
+
+interface UpdateInfoI {
+  version?: string;
+  releaseNotes?: string;
+  releaseDate?: string;
+  githubReleaseUrl?: string;
+}
+
+interface ConfirmDialogOptionsI {
+  title: string;
+  message: string;
+  detail?: string;
+}
+
 interface Window {
   api: {
     // App info
     getAppVersion: () => Promise<string>;
 
     // Update operations
-    onUpdateAvailable: (callback: (data: any) => void) => void;
+    onUpdateAvailable: (callback: (data: UpdateInfoI) => void) => void;
 
     // Config operations
-    loadConfig: () => Promise<any>;
-    saveConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
+    // On failure the main process resolves `{ error }` instead of a config
+    loadConfig: () => Promise<ConfigI & { error?: string }>;
+    saveConfig: (config: ConfigI) => Promise<{ success: boolean; error?: string }>;
     
     // Deploy operations
     canDeploy: (projectName: string) => Promise<boolean>;
     getActiveDeployments: () => Promise<string[]>;
-    startDeploy: (options: any) => Promise<any>;
+    startDeploy: (options: DeployOptions) => Promise<StartDeployResult>;
     
     // Log operations
     getLogDir: () => Promise<string>;
@@ -33,12 +55,12 @@ interface Window {
     onShowAbout: (callback: () => void) => void;
 
     // Dialog operations
-    openDialogConfirm: (options: any) => Promise<boolean>;
+    openDialogConfirm: (options: ConfirmDialogOptionsI) => Promise<boolean>;
 
     // File system
     openDirectoryDialog: () => Promise<string | null>;
 
     // Holidays
-    loadHolidaysConfig: () => Promise<any>;
+    loadHolidaysConfig: () => Promise<HolidayConfig>;
   };
 }
