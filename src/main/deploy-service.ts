@@ -93,8 +93,8 @@ export class DeployService {
     }
 
     return commitMessage
-      .replace('{env}', env)
-      .replace('{type}', type);
+      .replace(/\{env\}/g, () => env)
+      .replace(/\{type\}/g, () => type);
   }
 
   private getFileContent(fileContentTemplate: string, env: string, type: string): string {
@@ -104,15 +104,15 @@ export class DeployService {
     }
     const now = new Date();
     const yyyy = String(now.getFullYear());
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
+    const mm = pad2(now.getMonth() + 1);
+    const dd = pad2(now.getDate());
     return fileContent
-      .replace('{date:y-m-d}', `${yyyy}-${mm}-${dd}`)
-      .replace('{date:y/m/d}', `${yyyy}/${mm}/${dd}`)
-      .replace('{date:d-m-y}', `${dd}-${mm}-${yyyy}`)
-      .replace('{date:d/m/y}', `${dd}/${mm}/${yyyy}`)
-      .replace('{env}', env)
-      .replace('{type}', type);
+      .replace(/\{date:y-m-d\}/g, () => `${yyyy}-${mm}-${dd}`)
+      .replace(/\{date:y\/m\/d\}/g, () => `${yyyy}/${mm}/${dd}`)
+      .replace(/\{date:d-m-y\}/g, () => `${dd}-${mm}-${yyyy}`)
+      .replace(/\{date:d\/m\/y\}/g, () => `${dd}/${mm}/${yyyy}`)
+      .replace(/\{env\}/g, () => env)
+      .replace(/\{type\}/g, () => type);
   }
 
   async deploy(options: DeployOptions): Promise<DeployResult> {
