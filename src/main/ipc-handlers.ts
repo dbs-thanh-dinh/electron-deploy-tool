@@ -3,8 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { WindowManager } from './window-manager';
 import { DeployService, DeployOptions } from './deploy-service';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { ConfigI } from './interface';
 
+const execFileAsync = promisify(execFile);
 const deployService = new DeployService();
 const userDataPath = app.getPath('userData');
 
@@ -167,24 +170,27 @@ export function registerIpcHandlers(windowManager: WindowManager) {
   // Get branches from git repo
   ipcMain.handle('get-branches', async (event, repoPath: string) => {
     try {
-      const { execSync } = require('child_process');
+      const gitOptions = {
+        cwd: repoPath,
+        encoding: 'utf8' as const,
+        timeout: 2 * 60 * 1000,
+        windowsHide: true,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      };
 
       // Fetch latest branches
-      execSync('git fetch --prune', { cwd: repoPath });
+      await execFileAsync('git', ['fetch', '--prune'], gitOptions);
 
       // Get the list of remote branches
-      const output: string = execSync('git branch -r', { 
-        cwd: repoPath, 
-        encoding: 'utf8' 
-      });
+      const { stdout } = await execFileAsync('git', ['branch', '-r'], gitOptions);
 
       // Parse branches
-      const branches = output
+      const branches = stdout
         .split('\n')
-        .map(b => b.trim().replace('origin/', ''))
+        .map(b => b.trim().replace(/^origin\//, ''))
         .filter(b => b && !b.includes('->'))
         .sort();
-      
+
       return branches;
     } catch (err: any) {
       console.error('Error getting branches:', err);
