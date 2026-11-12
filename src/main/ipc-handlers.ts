@@ -8,6 +8,12 @@ import { promisify } from 'node:util';
 import { ConfigI } from './interface';
 
 const execFileAsync = promisify(execFile);
+
+interface ConfirmDialogOptionsI {
+  title: string;
+  message: string;
+  detail?: string;
+}
 const deployService = new DeployService();
 const userDataPath = app.getPath('userData');
 
@@ -98,9 +104,9 @@ export function registerIpcHandlers(windowManager: WindowManager) {
           return project;
         });
       return scripts;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error loading config:', err);
-      return { error: err.message };
+      return { error: (err as Error).message };
     }
   });
 
@@ -111,8 +117,8 @@ export function registerIpcHandlers(windowManager: WindowManager) {
       fs.writeFileSync(scriptsPath, JSON.stringify(config, null, 2), 'utf8');
       windowManager.broadcastConfigUpdate(event.sender.id);
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err.message };
+    } catch (err: unknown) {
+      return { success: false, error: (err as Error).message };
     }
   });
 
@@ -192,13 +198,13 @@ export function registerIpcHandlers(windowManager: WindowManager) {
         .sort();
 
       return branches;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error getting branches:', err);
       return [];
     }
   });
 
-  ipcMain.handle('open-dialog-confirm', async (event, options: any) => {
+  ipcMain.handle('open-dialog-confirm', async (event, options: ConfirmDialogOptionsI) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
 
@@ -238,7 +244,7 @@ export function registerIpcHandlers(windowManager: WindowManager) {
       } else {
         return { holidays: [] };
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error loading holidays config:', err);
       return { holidays: [] };
     }

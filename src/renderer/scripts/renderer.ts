@@ -100,7 +100,7 @@ function initTheme() {
 }
 
 // ===== DEPLOY PAGE =====
-let currentConfig: any = null;
+let currentConfig: ConfigI | null = null;
 let activeDeployments: string[] = [];
 let allBranches: string[] = []; // Store all branches for filtering
 let isDeploying = false; // A deploy started from this window is in progress
@@ -140,7 +140,7 @@ async function refreshDeployConfig() {
 
   await loadDeployConfig();
 
-  const project = currentConfig?.projects?.find((p: any) => p.name === selectedName);
+  const project = currentConfig?.projects?.find((p) => p.name === selectedName);
   if (project) {
     projectSelect.value = selectedName;
     populateProjectOptions(project, true);
@@ -174,7 +174,7 @@ function resetDeployDependents() {
 }
 
 // Fill env / type / template controls for a project; keeps the current choice only when preserveSelection is set
-function populateProjectOptions(project: any, preserveSelection = false) {
+function populateProjectOptions(project: ProjectI, preserveSelection = false) {
   const envSelect = document.getElementById("envSelect") as HTMLSelectElement;
   const typeSelect = document.getElementById("typeSelect") as HTMLSelectElement;
   const commitTemplate = document.getElementById("commitTemplate") as HTMLInputElement;
@@ -240,7 +240,7 @@ function populateProjectSelect() {
   projectSelect.innerHTML = '<option value="">Select a project...</option>';
 
   if (currentConfig && currentConfig.projects) {
-    currentConfig.projects.forEach((project: any) => {
+    currentConfig.projects.forEach((project) => {
       const option = document.createElement("option");
       option.value = project.name;
       option.textContent = project.name;
@@ -275,7 +275,7 @@ function setupDeployEventListeners() {
     commitTemplate.disabled = true;
     fileContentTemplate.disabled = true;
 
-    const project = currentConfig.projects.find((p: any) => p.name === projectName);
+    const project = currentConfig!.projects.find((p) => p.name === projectName);
     if (!project) return;
 
     // Load branches from git repo
@@ -431,7 +431,7 @@ async function runDeploy() {
     return;
   }
 
-  const project = currentConfig.projects.find((p: any) => p.name === projectName);
+  const project = currentConfig!.projects.find((p) => p.name === projectName);
   if (!project) return;
 
   const confirm = await window.api.openDialogConfirm({
@@ -468,9 +468,10 @@ async function runDeploy() {
     } else {
       window.api.showNotification("Deploy Failed", result.error || "Unknown error occurred");
     }
-  } catch (err: any) {
-    logOutput.textContent += `\n\nError: ${err.message}`;
-    window.api.showNotification("Deploy Error", err.message);
+  } catch (err: unknown) {
+    const message = (err as Error).message;
+    logOutput.textContent += `\n\nError: ${message}`;
+    window.api.showNotification("Deploy Error", message);
   } finally {
     loadingOverlay.style.display = "none";
     setFormEnabled(true);
@@ -494,7 +495,7 @@ function setFormEnabled(enabled: boolean) {
 }
 
 // ===== PROJECTS PAGE =====
-let projectsConfig: any = null;
+let projectsConfig: ConfigI | null = null;
 let editingProjectIndex: number | null = null;
 
 async function initProjectsPage() {
@@ -522,7 +523,7 @@ function renderProjectsList() {
     return;
   }
 
-  projectsConfig.projects.forEach((project: any, index: number) => {
+  projectsConfig.projects.forEach((project, index: number) => {
     const card = document.createElement("div");
     card.className = "project-card";
     card.innerHTML = `
@@ -594,7 +595,7 @@ function showAddForm() {
 
 function editProject(index: number) {
   editingProjectIndex = index;
-  const project = projectsConfig.projects[index];
+  const project = projectsConfig!.projects[index];
   const formContainer = document.getElementById("projectFormContainer") as HTMLDivElement;
   const formTitle = document.getElementById("formTitle") as HTMLHeadingElement;
 
@@ -626,7 +627,7 @@ function editProject(index: number) {
 }
 
 async function deleteProject(index: number) {
-  const project = projectsConfig.projects[index];
+  const project = projectsConfig!.projects[index];
   if (!confirm(`Are you sure you want to delete project "${project.name}"?`)) {
     return;
   }
@@ -635,7 +636,7 @@ async function deleteProject(index: number) {
   if (editingProjectIndex !== null) {
     hideForm();
   }
-  projectsConfig.projects.splice(index, 1);
+  projectsConfig!.projects.splice(index, 1);
   await saveProjectsConfig();
   renderProjectsList();
 }
@@ -719,7 +720,7 @@ async function saveProject() {
     smartAppend: smartAppendCheck,
   };
 
-  if (projectsConfig.projects.some((p: any, i: number) => p.name === name && i !== editingProjectIndex)) {
+  if (projectsConfig.projects.some((p, i: number) => p.name === name && i !== editingProjectIndex)) {
     alert(`Project with name "${name}" already exists`);
     return;
   }
@@ -786,12 +787,12 @@ async function handleFileContentFormatSelectChange() {
 
 async function saveProjectsConfig() {
   try {
-    const result = await window.api.saveConfig(projectsConfig);
+    const result = await window.api.saveConfig(projectsConfig!);
     if (!result.success) {
       alert(`Failed to save config: ${result.error}`);
     }
-  } catch (err: any) {
-    alert(`Error saving config: ${err.message}`);
+  } catch (err: unknown) {
+    alert(`Error saving config: ${(err as Error).message}`);
   }
 }
 
@@ -882,11 +883,11 @@ function initAutoUpdateHandlers() {
   const closeUpdatePopupBtn = document.getElementById('closeUpdatePopupBtn') as HTMLButtonElement;
 
   // Listen for update available event from main process
-  window.api.onUpdateAvailable?.((data: any) => {
+  window.api.onUpdateAvailable?.((data) => {
     showUpdateAvailablePopup(data);
   });
 
-  function showUpdateAvailablePopup(info: any) {
+  function showUpdateAvailablePopup(info: UpdateInfoI) {
     updateAvailablePopup.style.display = 'flex';
     
     // Update version info

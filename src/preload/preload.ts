@@ -1,4 +1,20 @@
 import { contextBridge, ipcRenderer } from 'electron';
+// `import type` is erased at compile time (preload runs sandboxed and cannot require main-process modules)
+import type { ConfigI } from '../main/interface';
+import type { DeployOptions } from '../main/deploy-service';
+
+interface UpdateInfoI {
+  version?: string;
+  releaseNotes?: string;
+  releaseDate?: string;
+  githubReleaseUrl?: string;
+}
+
+interface ConfirmDialogOptionsI {
+  title: string;
+  message: string;
+  detail?: string;
+}
 
 // Expose protected methods that allow the renderer process to use
 // ipcRenderer without exposing the entire object
@@ -7,18 +23,18 @@ contextBridge.exposeInMainWorld('api', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
   // Update operations
-  onUpdateAvailable: (callback: (data: any) => void) => {
+  onUpdateAvailable: (callback: (data: UpdateInfoI) => void) => {
     ipcRenderer.on('update-available', (_event, data) => callback(data));
   },
 
   // Config operations
   loadConfig: () => ipcRenderer.invoke('load-config'),
-  saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
+  saveConfig: (config: ConfigI) => ipcRenderer.invoke('save-config', config),
   
   // Deploy operations
   canDeploy: (projectName: string) => ipcRenderer.invoke('can-deploy', projectName),
   getActiveDeployments: () => ipcRenderer.invoke('get-active-deployments'),
-  startDeploy: (options: any) => ipcRenderer.invoke('start-deploy', options),
+  startDeploy: (options: DeployOptions) => ipcRenderer.invoke('start-deploy', options),
   
   // Log operations
   getLogDir: () => ipcRenderer.invoke('get-log-dir'),
@@ -53,7 +69,7 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   // Dialog operations
-  openDialogConfirm: (options: any) => ipcRenderer.invoke('open-dialog-confirm', options),
+  openDialogConfirm: (options: ConfirmDialogOptionsI) => ipcRenderer.invoke('open-dialog-confirm', options),
 
   // File system
   openDirectoryDialog: () => ipcRenderer.invoke('open-directory-dialog'),

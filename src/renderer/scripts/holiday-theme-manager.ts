@@ -14,6 +14,7 @@ interface Holiday {
   date: string; // Format: "M/D"
   daysBefore: number;
   daysAfter: number;
+  enabled?: boolean;
   theme: HolidayTheme;
 }
 
@@ -138,7 +139,7 @@ class HolidayThemeManager {
   private findActiveHoliday(date: Date): Holiday | null {
     if (!this.config) return null;
 
-    const holidays = this.config.holidays.filter((h) => !!(h as any).enabled);
+    const holidays = this.config.holidays.filter((h) => !!h.enabled);
     for (const holiday of holidays) {
       if (this.isDateInHolidayPeriod(date, holiday)) {
         return holiday;

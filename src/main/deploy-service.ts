@@ -4,22 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { ProjectI } from './interface';
+import { applyCicdEntry, getCommitMsg, getFileContent, getGitErrorMessage, getLocalDate, getLocalTimestamp } from './deploy-utils';
 
 const execFileAsync = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 5 * 60 * 1000;
-
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
-function getLocalDate(now: Date = new Date()): string {
-  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
-}
-
-function getLocalTimestamp(now: Date = new Date()): string {
-  return `${getLocalDate(now)} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
-}
 
 export interface DeployOptions {
   project: ProjectI;
@@ -78,41 +67,12 @@ export class DeployService {
         this.log(output, logs);
       }
       return true;
-    } catch (err: any) {
+    } catch (err: unknown) {
       this.log(`❌ Error running: git ${args[0]}`, logs);
-      const errorMsg = err.stderr?.toString() || err.message;
-      this.log(errorMsg, logs);
+      // String() keeps the original output ("undefined") when the error carries no message
+      this.log(String(getGitErrorMessage(err)), logs);
       return false;
     }
-  }
-
-  private getCommitMsg(commitTemplate: string, env: string, type: string): string {
-    let commitMessage = commitTemplate;
-    if (type === 'all') {
-      commitMessage = commitMessage.replace(/\{type\}\s*,\s*|\s*,\s*\{type\}/gi, "");
-    }
-
-    return commitMessage
-      .replace(/\{env\}/g, () => env)
-      .replace(/\{type\}/g, () => type);
-  }
-
-  private getFileContent(fileContentTemplate: string, env: string, type: string): string {
-    let fileContent = fileContentTemplate;
-    if (type === 'all') {
-      fileContent = fileContent.replace(/\{type\}\s*,\s*|\s*,\s*\{type\}/gi, "");
-    }
-    const now = new Date();
-    const yyyy = String(now.getFullYear());
-    const mm = pad2(now.getMonth() + 1);
-    const dd = pad2(now.getDate());
-    return fileContent
-      .replace(/\{date:y-m-d\}/g, () => `${yyyy}-${mm}-${dd}`)
-      .replace(/\{date:y\/m\/d\}/g, () => `${yyyy}/${mm}/${dd}`)
-      .replace(/\{date:d-m-y\}/g, () => `${dd}-${mm}-${yyyy}`)
-      .replace(/\{date:d\/m\/y\}/g, () => `${dd}/${mm}/${yyyy}`)
-      .replace(/\{env\}/g, () => env)
-      .replace(/\{type\}/g, () => type);
   }
 
   async deploy(options: DeployOptions): Promise<DeployResult> {
@@ -166,7 +126,7 @@ export class DeployService {
       }
 
       // Update CICD.txt
-      const cicdFileContent = this.getFileContent(fileContentTemplate, env, type);
+      const cicdFileContent = getFileContent(fileContentTemplate, env, type);
       this.updateCICDFile(logs, project, cicdFileContent);
       
       // Commit
@@ -174,7 +134,7 @@ export class DeployService {
         throw new Error('Git add failed');
       }
       
-      const commitMsg = this.getCommitMsg(commitTemplate, env, type);
+      const commitMsg = getCommitMsg(commitTemplate, env, type);
       if (!(await this.runGit(['commit', '-m', commitMsg], repoPath, logs))) {
         throw new Error('Git commit failed');
       }
@@ -191,9 +151,10 @@ export class DeployService {
       }
 
       return { success: true, logs };
-    } catch (err: any) {
-      this.log(`❌ Deploy failed: ${err.message}`, logs);
-      return { success: false, logs, error: err.message };
+    } catch (err: unknown) {
+      const message = (err as Error).message;
+      this.log(`❌ Deploy failed: ${message}`, logs);
+      return { success: false, logs, error: message };
     } finally {
       this.log('', logs);
     }
@@ -205,37 +166,13 @@ export class DeployService {
       throw new Error(`${project.cicdFileName} does not exist in repo`);
     }
     const content = fs.readFileSync(cicdPath, 'utf8');
-    const eol = content.includes('\r\n') ? '\r\n' : '\n';
-    const lines = content.split(/\r?\n/);
-
-    const updateCommitMsg = (lines: string[], index: number, commitMsg: string) => {
-      const line = lines[index];
-      const lineBase = line.replace(/\s*\++\s*$/, '').trim();
-      if (!project.smartAppend || lineBase !== commitMsg.trim()) {
-        // Add new line with commitMsg
-        this.log(`✓ Added to ${project.cicdFileName}: ${commitMsg}`, logs);
-        lines.splice(index + 1, 0, commitMsg);
-      } else {
-        // Append "+" to line
-        lines.splice(index, 1, line + '+');
-        this.log(`✓ Appended "+" to existing entry in ${project.cicdFileName}: "${line}" -> "${lines[index]}"`, logs);
-      }
+    const result = applyCicdEntry(content, commitMsg, project.smartAppend);
+    if (result.action === 'added') {
+      this.log(`✓ Added to ${project.cicdFileName}: ${commitMsg}`, logs);
+    } else if (result.action === 'appended') {
+      this.log(`✓ Appended "+" to existing entry in ${project.cicdFileName}: "${result.previousLine}" -> "${result.newLine}"`, logs);
     }
-
-    // File empty
-    if (lines.length === 1 && lines[0] === '') {
-      fs.writeFileSync(cicdPath, commitMsg);
-    } else {
-      const lastLine = lines.at(-1) as string;
-      // Remove existing "+" from lastLine for comparison
-      if (lastLine.trim() === '') {
-        // Last line is empty, just add new line
-        updateCommitMsg(lines, lines.length - 2, commitMsg);
-      } else {
-        updateCommitMsg(lines, lines.length - 1, commitMsg);
-      }
-      fs.writeFileSync(cicdPath, lines.join(eol));
-    }
+    fs.writeFileSync(cicdPath, result.content);
   }
 
   getLogDir(): string {
