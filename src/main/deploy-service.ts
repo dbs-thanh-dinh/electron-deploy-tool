@@ -85,10 +85,6 @@ export class DeployService {
     return (await this.runGitOutput(args, cwd, logs)) !== null;
   }
 
-  /**
-   * `git diff --cached --quiet` exits 1 when there ARE staged changes, which is a normal result
-   * (not an error), so it cannot go through runGit. Any other failure is rethrown.
-   */
   /** Hash of the newest stash entry ('' when there is none or git fails). Silent: not written to the log. */
   private async getTopStash(cwd: string): Promise<string> {
     try {
@@ -99,6 +95,10 @@ export class DeployService {
     }
   }
 
+  /**
+   * `git diff --cached --quiet` exits 1 when there ARE staged changes, which is a normal result
+   * (not an error), so it cannot go through runGit. Any other failure is rethrown.
+   */
   private async hasStagedChanges(pathspec: string, cwd: string, logs: string[]): Promise<boolean> {
     this.log(`$ git diff --cached --quiet -- ${pathspec}`, logs);
     try {
