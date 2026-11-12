@@ -186,6 +186,8 @@ function setupDeployEventListeners() {
     branchSelect.innerHTML = '<option value="">Loading branches...</option>';
 
     const branches = await window.api.getBranches(project.repoPath);
+    // Ignore stale result if the user picked another project while loading
+    if (projectSelect.value !== projectName) return;
     allBranches = branches; // Store for filtering
 
     // Populate branches
