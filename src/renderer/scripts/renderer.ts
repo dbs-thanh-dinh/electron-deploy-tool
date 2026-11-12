@@ -437,6 +437,7 @@ async function runDeploy() {
   const confirm = await window.api.openDialogConfirm({
     title: "Confirm Deploy",
     message: `Deploy project "${projectName}" to environment "${env}" with type "${type}"?`,
+    detail: `Branch: ${branch}${dryRun ? "\nMode: DRY RUN (no push)" : ""}`,
   });
   if (!confirm) return;
 
