@@ -6,7 +6,7 @@
 
 - **Nhiều cửa sổ**: deploy nhiều project song song, nhưng chặn deploy trùng một project ở hai cửa sổ.
 - **Quản lý project**: thêm, sửa, xoá project ngay trong ứng dụng.
-- **Log realtime**: hiển thị output các lệnh git trong lúc deploy.
+- **Log deploy**: hiển thị toàn bộ output các lệnh git sau khi deploy kết thúc và lưu vào file log theo ngày.
 - **Lịch sử deploy**: xem lại log theo ngày.
 - **Dry-run**: chạy thử toàn bộ quy trình nhưng không push.
 - **Thông báo hệ thống** khi deploy xong.
@@ -152,7 +152,7 @@ Cấu hình trong [`extra/holidays-config.json`](extra/holidays-config.json). M�
 }
 ```
 
-- `type`: `solar` (dương lịch) hoặc `lunar` (âm lịch); `date` theo dạng `"ngày/tháng"` hiểu là `M/D` như trong file mẫu.
+- `type`: `solar` (dương lịch) hoặc `lunar` (âm lịch); `date` theo dạng `"tháng/ngày"` (`M/D`), ví dụ `"5/1"` là ngày 1 tháng 5. Ngày âm lịch được quy đổi bằng bảng cố định cho năm 2024–2030.
 - `daysBefore` / `daysAfter`: số ngày áp dụng theme trước và sau ngày lễ.
 - `enabled`: đặt `false` để tắt một ngày lễ.
 - Ảnh nền đặt trong `assets/holidays/`.
