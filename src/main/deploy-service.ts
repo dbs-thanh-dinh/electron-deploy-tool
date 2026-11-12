@@ -57,7 +57,8 @@ export class DeployService {
       encoding: 'utf8' as const,
       timeout: GIT_TIMEOUT_MS,
       windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      // Literal pathspecs: a CICD file name like "CICD[1].txt" must not be treated as a glob/magic by add/diff/checkout
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' },
     };
   }
 
@@ -158,7 +159,7 @@ export class DeployService {
 
       // --ff-only: never create a merge commit or leave the repo in a conflicted state
       if (!(await this.runGit(['pull', '--ff-only'], repoPath, logs))) {
-        this.log('ℹ️ Pull must fast-forward. The local branch may have diverged from remote (e.g. unpushed local commits from a previous deploy or dry-run) or has no upstream.', logs);
+        this.log('ℹ️ Pull failed. Common causes: the local branch cannot fast-forward (e.g. unpushed local commits from a previous deploy or dry-run), no upstream branch, or a network/auth problem.', logs);
         throw new Error('Git pull failed');
       }
 

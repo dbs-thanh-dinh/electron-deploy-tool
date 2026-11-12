@@ -132,6 +132,36 @@ describe('DeployService.deploy', () => {
     expect(joined(result.logs)).toContain('Current branch: main');
   });
 
+  it('handles a CICD file in a sub-directory and a glob-like file name literally', async () => {
+    fs.mkdirSync(path.join(workDir, 'ci'));
+    fs.writeFileSync(path.join(workDir, 'ci', 'CICD[1].txt'), 'deploy: init\n');
+    fs.writeFileSync(path.join(workDir, 'ci', 'CICD1.txt'), 'untouched\n');
+    git(workDir, 'add', '-A');
+    git(workDir, 'commit', '-m', 'add ci dir');
+    git(workDir, 'push');
+
+    const result = await service.deploy(makeOptions({ dryRun: true }, { cicdFileName: 'ci/CICD[1].txt' }));
+
+    expect(result.success).toBe(true);
+    expect(fs.readFileSync(path.join(workDir, 'ci', 'CICD[1].txt'), 'utf8')).toBe('deploy: init\ndeploy: dev, api\n');
+    // The glob "CICD[1].txt" would also match CICD1.txt; literal pathspecs must leave it alone
+    expect(fs.readFileSync(path.join(workDir, 'ci', 'CICD1.txt'), 'utf8')).toBe('untouched\n');
+    expect(git(workDir, 'show', '--name-only', '--format=', 'HEAD')).toBe('ci/CICD[1].txt');
+  });
+
+  it('checks out another branch before deploying', async () => {
+    git(workDir, 'branch', 'release');
+    git(workDir, 'push', '-u', 'origin', 'release'); // -u: pull needs an upstream
+
+    const result = await service.deploy(makeOptions({ dryRun: true, branch: 'release' }));
+
+    expect(result.success).toBe(true);
+    expect(git(workDir, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('release');
+    expect(headMessage(workDir)).toBe('deploy: dev, api');
+    // main is untouched
+    expect(git(workDir, 'log', '-1', '--format=%s', 'main')).toBe('init');
+  });
+
   describe('nothing to commit', () => {
     it('fails with a clear error and creates no commit', async () => {
       // Empty file + empty template => the CICD file content does not change
@@ -153,7 +183,8 @@ describe('DeployService.deploy', () => {
   describe('rollback when the commit fails', () => {
     it('restores the CICD file and the index', async () => {
       const hook = path.join(workDir, '.git', 'hooks', 'pre-commit');
-      fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+      // mode 0o755: git ignores non-executable hooks on Linux/macOS
+      fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
       const headBefore = git(workDir, 'rev-parse', 'HEAD');
 
       const result = await service.deploy(makeOptions());
@@ -170,7 +201,7 @@ describe('DeployService.deploy', () => {
   describe('push failure', () => {
     it('keeps the local commit, does not roll back, and tells the user it was not pushed', async () => {
       // Pull still works; only the push is rejected by the remote
-      fs.writeFileSync(path.join(remoteDir, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n');
+      fs.writeFileSync(path.join(remoteDir, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
 
       const result = await service.deploy(makeOptions());
 
@@ -211,7 +242,7 @@ describe('DeployService.deploy', () => {
       expect(readCicd()).toBe(INITIAL_CICD);
       // Failed before the CICD file was written, so there is nothing to roll back
       expect(joined(result.logs)).not.toContain('Rolling back');
-      expect(joined(result.logs)).toContain('may have diverged');
+      expect(joined(result.logs)).toContain('cannot fast-forward');
     });
   });
 });
