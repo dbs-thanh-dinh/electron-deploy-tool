@@ -103,6 +103,15 @@ function initTheme() {
 let currentConfig: any = null;
 let activeDeployments: string[] = [];
 let allBranches: string[] = []; // Store all branches for filtering
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 
 async function initDeployPage() {
   await loadDeployConfig();
@@ -427,20 +436,20 @@ function renderProjectsList() {
     card.className = "project-card";
     card.innerHTML = `
       <div class="project-card-header">
-        <h3>${project.name}</h3>
+        <h3>${escapeHtml(project.name)}</h3>
         <div class="project-card-actions">
           <button class="btn btn-small edit-btn" data-index="${index}">Edit</button>
           <button class="btn btn-small btn-danger delete-btn" data-index="${index}">Delete</button>
         </div>
       </div>
       <div class="project-card-body">
-        <div class="project-detail"><strong>Path:</strong> ${project.repoPath}</div>
-        <div class="project-detail"><strong>Environments:</strong> ${project.envs.join(", ")}</div>
-        <div class="project-detail"><strong>Deploy Types:</strong> ${project.deployTypes.join(", ")}</div>
-        <div class="project-detail"><strong>Branch filter:</strong> ${project.branchFilter}</div>
-        <div class="project-detail"><strong>Commit Template:</strong> ${project.commitTemplate}</div>
-        <div class="project-detail"><strong>CICD File Name:</strong> ${project.cicdFileName}</div>
-        <div class="project-detail"><strong>File Content Template:</strong> ${project.fileContentTemplate}</div>
+        <div class="project-detail"><strong>Path:</strong> ${escapeHtml(project.repoPath)}</div>
+        <div class="project-detail"><strong>Environments:</strong> ${escapeHtml(project.envs.join(", "))}</div>
+        <div class="project-detail"><strong>Deploy Types:</strong> ${escapeHtml(project.deployTypes.join(", "))}</div>
+        <div class="project-detail"><strong>Branch filter:</strong> ${escapeHtml(project.branchFilter)}</div>
+        <div class="project-detail"><strong>Commit Template:</strong> ${escapeHtml(project.commitTemplate)}</div>
+        <div class="project-detail"><strong>CICD File Name:</strong> ${escapeHtml(project.cicdFileName)}</div>
+        <div class="project-detail"><strong>File Content Template:</strong> ${escapeHtml(project.fileContentTemplate)}</div>
         <div class="project-detail"><strong>Smart Append:</strong> ${project.smartAppend ? "Yes" : "No"}</div>
       </div>
     `;
