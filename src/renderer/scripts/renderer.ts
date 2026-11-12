@@ -163,6 +163,7 @@ function resetDeployDependents() {
   branchRequestSeq++;
   const branchLoading = document.getElementById("branchLoading") as HTMLDivElement;
   branchLoading.style.display = "none";
+  (document.getElementById("branchError") as HTMLDivElement).style.display = "none";
   window.api.cancelGetBranches();
 
   const branchFilter = document.getElementById("branchFilter") as HTMLInputElement;
@@ -302,6 +303,7 @@ function setupDeployEventListeners() {
     // Clear and disable dependent selects
     const requestSeq = ++branchRequestSeq; // invalidates the previous project's load
     branchLoading.style.display = "none";
+    (document.getElementById("branchError") as HTMLDivElement).style.display = "none";
     branchSelect.disabled = true;
     envSelect.disabled = true;
     typeSelect.disabled = true;
@@ -318,10 +320,13 @@ function setupDeployEventListeners() {
     branchSelect.innerHTML = '<option value="">Loading branches...</option>';
 
     branchLoading.style.display = "flex";
-    const branches = await window.api.getBranches(project.repoPath);
+    const { branches, error: branchesError } = await window.api.getBranches(project.repoPath);
     // Ignore stale result if the user picked another project (even A -> B -> A) or cancelled while loading
     if (requestSeq !== branchRequestSeq) return;
     branchLoading.style.display = "none";
+    const branchError = document.getElementById("branchError") as HTMLDivElement;
+    branchError.textContent = branchesError ?? "";
+    branchError.style.display = branchesError ? "block" : "none";
     allBranches = branches; // Store for filtering
 
     // Populate branches

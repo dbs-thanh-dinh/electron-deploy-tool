@@ -3,12 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { WindowManager } from './window-manager';
 import { DeployService, DeployOptions } from './deploy-service';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { ConfigI } from './interface';
 import { applyProjectDefaults, saveConfigToFile } from './config-utils';
-
-const execFileAsync = promisify(execFile);
+import { getRemoteBranches } from './branch-utils';
 
 interface ConfirmDialogOptionsI {
   title: string;
@@ -183,33 +180,8 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     event.sender.once('destroyed', onDestroyed);
 
     try {
-      const gitOptions = {
-        cwd: repoPath,
-        encoding: 'utf8' as const,
-        timeout: 2 * 60 * 1000,
-        windowsHide: true,
-        signal: controller.signal,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-      };
-
-      // Fetch latest branches
-      await execFileAsync('git', ['fetch', '--prune'], gitOptions);
-
-      // Get the list of remote branches
-      const { stdout } = await execFileAsync('git', ['branch', '-r'], gitOptions);
-
-      // Parse branches
-      const branches = stdout
-        .split('\n')
-        .map(b => b.trim().replace(/^origin\//, ''))
-        .filter(b => b && !b.includes('->'))
-        .sort();
-
-      return branches;
-    } catch (err: unknown) {
-      // Aborted by the user or superseded by a newer request: not an error
-      if (!controller.signal.aborted) console.error('Error getting branches:', err);
-      return [];
+      // Never throws: problems are reported in `error`, an aborted request yields an empty list
+      return await getRemoteBranches(repoPath, controller.signal);
     } finally {
       event.sender.removeListener('destroyed', onDestroyed); // avoid piling up listeners per request
       if (branchRequests.get(senderId) === controller) branchRequests.delete(senderId);

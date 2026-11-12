@@ -4,11 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { ProjectI } from './interface';
+import { pruneOldLogs } from './log-utils';
 import { applyCicdEntry, getCommitMsg, getFileContent, getGitErrorMessage, getLocalDate, getLocalTimestamp } from './deploy-utils';
 
 const execFileAsync = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 5 * 60 * 1000;
+const LOG_RETENTION_DAYS = 90;
 
 export interface DeployOptions {
   project: ProjectI;
@@ -33,6 +35,11 @@ export class DeployService {
 
   constructor() {
     fs.mkdirSync(this.logDir, { recursive: true });
+
+    const removed = pruneOldLogs(this.logDir, LOG_RETENTION_DAYS);
+    if (removed.length > 0) {
+      this.log(`Removed ${removed.length} log file(s) older than ${LOG_RETENTION_DAYS} days`, []);
+    }
   }
 
   private getLogFilePath(): string {

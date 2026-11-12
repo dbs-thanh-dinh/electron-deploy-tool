@@ -4,6 +4,7 @@
 type ProjectI = import('../main/interface').ProjectI;
 type ConfigI = import('../main/interface').ConfigI;
 type DeployOptions = import('../main/deploy-service').DeployOptions;
+type BranchesResultI = import('../main/branch-utils').BranchesResultI;
 // start-deploy can fail before running (e.g. duplicate deploy), in which case there are no logs
 type StartDeployResult = Omit<import('../main/deploy-service').DeployResult, 'logs'> & { logs?: string[] };
 
@@ -49,7 +50,7 @@ interface Window {
     readLogFile: (filename: string) => Promise<string>;
     
     // Git operations
-    getBranches: (repoPath: string) => Promise<string[]>;
+    getBranches: (repoPath: string) => Promise<BranchesResultI>;
     cancelGetBranches: () => Promise<void>;
     
     // Notifications
