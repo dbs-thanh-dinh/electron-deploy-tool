@@ -50,12 +50,14 @@ interface Window {
     
     // Git operations
     getBranches: (repoPath: string) => Promise<string[]>;
+    cancelGetBranches: () => Promise<void>;
     
     // Notifications
     showNotification: (title: string, body: string) => void;
     
     // Event listeners
     onDeploymentStatusChanged: (callback: (activeProjects: string[]) => void) => void;
+    onDeployLog: (callback: (line: string) => void) => void;
     onConfigUpdated: (callback: () => void) => void;
     onShowAbout: (callback: () => void) => void;
 

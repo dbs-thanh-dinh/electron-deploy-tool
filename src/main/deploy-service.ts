@@ -39,9 +39,19 @@ export class DeployService {
     return path.join(this.logDir, `deploy-${getLocalDate()}.log`);
   }
 
+  // Per-deploy live log listeners, keyed by the deploy's logs array (deploys of different projects can run concurrently)
+  private readonly logListeners = new WeakMap<string[], (line: string) => void>();
+
   private log(msg: string, logs: string[]): void {
     const line = `[${getLocalTimestamp()}] ${msg}`;
     logs.push(line);
+
+    // A failing listener (e.g. a closed window) must never break the deploy
+    try {
+      this.logListeners.get(logs)?.(line);
+    } catch (err) {
+      console.error('Log listener failed:', err);
+    }
     
     // Also write to file
     try {
@@ -117,8 +127,10 @@ export class DeployService {
     this.log(ok ? `✓ Rolled back ${pathspec}` : `⚠️ Rollback failed, please check ${pathspec} manually`, logs);
   }
 
-  async deploy(options: DeployOptions): Promise<DeployResult> {
+  /** `onLog` receives every log line as soon as it is written (the full list is still returned at the end). */
+  async deploy(options: DeployOptions, onLog?: (line: string) => void): Promise<DeployResult> {
     const logs: string[] = [];
+    if (onLog) this.logListeners.set(logs, onLog);
     const { project, branch, env, type, dryRun, commitTemplate, fileContentTemplate } = options;
     const repoPath = project.repoPath;
     let cicdPathspec: string | null = null;

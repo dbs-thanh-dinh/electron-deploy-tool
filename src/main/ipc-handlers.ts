@@ -140,7 +140,10 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     windowManager.setDeploymentActive(options.project.name, win.id);
     
     try {
-      const result = await deployService.deploy(options);
+      // Stream each log line to the window that started the deploy only
+      const result = await deployService.deploy(options, (line) => {
+        if (!event.sender.isDestroyed()) event.sender.send('deploy-log', line);
+      });
       return result;
     } finally {
       windowManager.setDeploymentInactive(options.project.name);
@@ -162,14 +165,30 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     return deployService.readLogFile(filename);
   });
 
+  // One in-flight get-branches per window: a newer request or an explicit cancel aborts the older one
+  const branchRequests = new Map<number, AbortController>();
+
+  ipcMain.handle('cancel-get-branches', async (event) => {
+    branchRequests.get(event.sender.id)?.abort();
+  });
+
   // Get branches from git repo
   ipcMain.handle('get-branches', async (event, repoPath: string) => {
+    const senderId = event.sender.id;
+    branchRequests.get(senderId)?.abort();
+    const controller = new AbortController();
+    branchRequests.set(senderId, controller);
+    // Stop the fetch if the window is closed meanwhile
+    const onDestroyed = () => controller.abort();
+    event.sender.once('destroyed', onDestroyed);
+
     try {
       const gitOptions = {
         cwd: repoPath,
         encoding: 'utf8' as const,
         timeout: 2 * 60 * 1000,
         windowsHide: true,
+        signal: controller.signal,
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       };
 
@@ -188,8 +207,12 @@ export function registerIpcHandlers(windowManager: WindowManager) {
 
       return branches;
     } catch (err: unknown) {
-      console.error('Error getting branches:', err);
+      // Aborted by the user or superseded by a newer request: not an error
+      if (!controller.signal.aborted) console.error('Error getting branches:', err);
       return [];
+    } finally {
+      event.sender.removeListener('destroyed', onDestroyed); // avoid piling up listeners per request
+      if (branchRequests.get(senderId) === controller) branchRequests.delete(senderId);
     }
   });
 

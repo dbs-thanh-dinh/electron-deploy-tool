@@ -16,6 +16,9 @@ document.addEventListener("DOMContentLoaded", () => {
     console.log("Config updated from another window, refreshing...");
     refreshConfigFromOtherWindow();
   });
+
+  // Live deploy log: only this window's own deploy sends these lines
+  window.api.onDeployLog((line) => appendDeployLogLine(line));
 });
 
 function initNavigation() {
@@ -108,6 +111,7 @@ function isConfigError(config: ConfigI | ConfigErrorI): config is ConfigErrorI {
 }
 let activeDeployments: string[] = [];
 let allBranches: string[] = []; // Store all branches for filtering
+let branchRequestSeq = 0; // Identifies the latest branch load; older results are dropped
 let isDeploying = false; // A deploy started from this window is in progress
 let pendingConfigRefresh = false; // Config changed elsewhere while deploying
 
@@ -155,6 +159,12 @@ async function refreshDeployConfig() {
 }
 
 function resetDeployDependents() {
+  // Drop any in-flight branch load: invalidate its result, hide the spinner, abort the git fetch
+  branchRequestSeq++;
+  const branchLoading = document.getElementById("branchLoading") as HTMLDivElement;
+  branchLoading.style.display = "none";
+  window.api.cancelGetBranches();
+
   const branchFilter = document.getElementById("branchFilter") as HTMLInputElement;
   const branchSelect = document.getElementById("branchSelect") as HTMLSelectElement;
   const envSelect = document.getElementById("envSelect") as HTMLSelectElement;
@@ -273,6 +283,15 @@ function setupDeployEventListeners() {
   const commitTemplate = document.getElementById("commitTemplate") as HTMLInputElement;
   const fileContentTemplate = document.getElementById("fileContentTemplate") as HTMLInputElement;
 
+  const branchLoading = document.getElementById("branchLoading") as HTMLDivElement;
+  const cancelBranchesBtn = document.getElementById("cancelBranchesBtn") as HTMLButtonElement;
+
+  cancelBranchesBtn.addEventListener("click", () => {
+    // Back to "no project selected"; resetDeployDependents aborts the request and drops its result
+    projectSelect.value = "";
+    resetDeployDependents();
+  });
+
   projectSelect.addEventListener("change", async () => {
     const projectName = projectSelect.value;
     if (!projectName) {
@@ -281,6 +300,8 @@ function setupDeployEventListeners() {
     }
 
     // Clear and disable dependent selects
+    const requestSeq = ++branchRequestSeq; // invalidates the previous project's load
+    branchLoading.style.display = "none";
     branchSelect.disabled = true;
     envSelect.disabled = true;
     typeSelect.disabled = true;
@@ -296,9 +317,11 @@ function setupDeployEventListeners() {
     branchSelect.disabled = true;
     branchSelect.innerHTML = '<option value="">Loading branches...</option>';
 
+    branchLoading.style.display = "flex";
     const branches = await window.api.getBranches(project.repoPath);
-    // Ignore stale result if the user picked another project while loading
-    if (projectSelect.value !== projectName) return;
+    // Ignore stale result if the user picked another project (even A -> B -> A) or cancelled while loading
+    if (requestSeq !== branchRequestSeq) return;
+    branchLoading.style.display = "none";
     allBranches = branches; // Store for filtering
 
     // Populate branches
@@ -397,6 +420,17 @@ function populateBranchSelect(branches: string[]) {
   }
 }
 
+function appendDeployLogLine(line: string) {
+  if (!isDeploying) return;
+  const logOutput = document.getElementById("deployLog") as HTMLDivElement;
+  const loadingText = document.getElementById("loadingText");
+  logOutput.textContent += (logOutput.textContent ? "\n" : "") + line;
+  logOutput.scrollTop = logOutput.scrollHeight;
+  // The overlay covers the log pane, so also show the latest line there
+  const message = line.replace(/^\[[^\]]*\]\s*/, "").trim();
+  if (loadingText && message) loadingText.textContent = message;
+}
+
 function clearLogOutput() {
   const logOutput = document.getElementById("deployLog") as HTMLDivElement;
   logOutput.textContent = "";
@@ -470,7 +504,7 @@ async function runDeploy() {
       fileContentTemplate,
     });
 
-    // Display logs
+    // Display the complete log (replaces the streamed lines, so nothing is lost if one was dropped)
     if (result.logs) {
       logOutput.textContent = result.logs.join("\n");
     }
@@ -487,6 +521,8 @@ async function runDeploy() {
     window.api.showNotification("Deploy Error", message);
   } finally {
     loadingOverlay.style.display = "none";
+    const loadingText = document.getElementById("loadingText");
+    if (loadingText) loadingText.textContent = "Deploying...";
     setFormEnabled(true);
   }
 }
