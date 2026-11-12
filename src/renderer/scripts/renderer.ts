@@ -540,6 +540,10 @@ async function deleteProject(index: number) {
     return;
   }
 
+  // Editing index may point to a different project after the splice
+  if (editingProjectIndex !== null) {
+    hideForm();
+  }
   projectsConfig.projects.splice(index, 1);
   await saveProjectsConfig();
   renderProjectsList();
@@ -557,6 +561,19 @@ function clearProjectForm() {
   (document.getElementById("repoPath") as HTMLInputElement).value = "";
   (document.getElementById("envs") as HTMLInputElement).value = "";
   (document.getElementById("deployTypes") as HTMLInputElement).value = "";
+  (document.getElementById("projectBranchFilter") as HTMLInputElement).value = "";
+  (document.getElementById("projectCICDFileName") as HTMLInputElement).value = "CICD.txt";
+  (document.getElementById("projectFileContentSmartAppend") as HTMLInputElement).checked = false;
+
+  (document.getElementById("projectCommitFormat") as HTMLSelectElement).value = "v1";
+  const commitTemplateInput = document.getElementById("projectCommitTemplate") as HTMLInputElement;
+  commitTemplateInput.value = "deploy: {env}, {type}";
+  commitTemplateInput.disabled = true;
+
+  (document.getElementById("projectFileContentFormat") as HTMLSelectElement).value = "default";
+  const fileContentTemplateInput = document.getElementById("projectFileContentTemplate") as HTMLInputElement;
+  fileContentTemplateInput.value = "deploy: {env}, {type}";
+  fileContentTemplateInput.disabled = true;
 }
 
 async function saveProject() {
@@ -571,6 +588,11 @@ async function saveProject() {
   const fileContentFormat = (document.getElementById("projectFileContentFormat") as HTMLSelectElement).value.trim();
   const fileContentTemplate = (document.getElementById("projectFileContentTemplate") as HTMLInputElement).value.trim();
   const smartAppendCheck = (document.getElementById("projectFileContentSmartAppend") as HTMLInputElement).checked;
+
+  if (!projectsConfig?.projects) {
+    alert("Configuration is not loaded. Please reload the app.");
+    return;
+  }
 
   // Validation
   if (!name || !repoPath || !envsStr || !typesStr || (commitFormat === "custom" && !commitTemplate) || !cicdFileName) {
@@ -666,7 +688,8 @@ async function handleFileContentFormatSelectChange() {
     fileContentTemplateInput.disabled = false;
   } else {
     fileContentTemplateInput.disabled = true;
-    fileContentTemplateInput.value = "deploy: {env}, {type}";
+    const commitTemplateInput = document.getElementById("projectCommitTemplate") as HTMLInputElement;
+    fileContentTemplateInput.value = commitTemplateInput.value || "deploy: {env}, {type}";
   }
 }
 
