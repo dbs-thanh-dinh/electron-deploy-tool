@@ -256,7 +256,11 @@ export class DeployService {
 
   readLogFile(filename: string): string {
     try {
-      const filePath = path.join(this.logDir, filename);
+      const safeName = path.basename(filename);
+      if (safeName !== filename || !safeName.startsWith('deploy-') || !safeName.endsWith('.log')) {
+        return 'Error reading log file: invalid file name';
+      }
+      const filePath = path.join(this.logDir, safeName);
       return fs.readFileSync(filePath, 'utf8');
     } catch (err) {
       return `Error reading log file: ${err}`;
