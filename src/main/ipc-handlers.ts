@@ -6,7 +6,7 @@ import { DeployService, DeployOptions } from './deploy-service';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { ConfigI } from './interface';
-import { applyProjectDefaults, validateConfig, writeFileAtomic } from './config-utils';
+import { applyProjectDefaults, saveConfigToFile } from './config-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -103,19 +103,12 @@ export function registerIpcHandlers(windowManager: WindowManager) {
 
   // Save configuration
   ipcMain.handle('save-config', async (event, config: unknown) => {
-    try {
-      // Reject invalid config before touching the file on disk
-      const validationError = validateConfig(config);
-      if (validationError) {
-        return { success: false, error: `Invalid config: ${validationError}` };
-      }
-      const scriptsPath = getScriptsPath();
-      await writeFileAtomic(scriptsPath, JSON.stringify(config, null, 2));
+    const result = await saveConfigToFile(getScriptsPath(), config);
+    // Only tell the other windows when the file actually changed
+    if (result.success) {
       windowManager.broadcastConfigUpdate(event.sender.id);
-      return { success: true };
-    } catch (err: unknown) {
-      return { success: false, error: (err as Error).message };
     }
+    return result;
   });
 
   // Check if can deploy

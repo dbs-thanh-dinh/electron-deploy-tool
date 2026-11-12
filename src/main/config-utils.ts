@@ -121,3 +121,21 @@ export async function writeFileAtomic(
     fs.rmSync(tmpPath, { force: true });
   }
 }
+
+/** Validates then atomically writes the config. Never throws; nothing is written when validation fails. */
+export async function saveConfigToFile(
+  filePath: string,
+  config: unknown,
+  options?: WriteFileAtomicOptions,
+): Promise<{ success: boolean; error?: string }> {
+  const validationError = validateConfig(config);
+  if (validationError) {
+    return { success: false, error: `Invalid config: ${validationError}` };
+  }
+  try {
+    await writeFileAtomic(filePath, JSON.stringify(config, null, 2), options);
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error).message };
+  }
+}

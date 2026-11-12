@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyProjectDefaults, validateConfig, writeFileAtomic } from '../src/main/config-utils';
+import { applyProjectDefaults, saveConfigToFile, validateConfig, writeFileAtomic } from '../src/main/config-utils';
 import { ProjectI } from '../src/main/interface';
 
 function validProject(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -183,5 +183,87 @@ describe('writeFileAtomic', () => {
     expect(rename).toHaveBeenCalledTimes(3);
     expect(fs.readFileSync(target, 'utf8')).toBe('old');
     expect(fs.readdirSync(dir)).toEqual(['scripts.json']);
+  });
+});
+
+describe('writeFileAtomic failures before rename', () => {
+  let dir: string;
+  let target: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'config-utils-test-'));
+    target = path.join(dir, 'scripts.json');
+    fs.writeFileSync(target, 'old');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  it('removes the temp file and keeps the old file when fsync throws', async () => {
+    vi.spyOn(fs, 'fsyncSync').mockImplementation(() => {
+      throw new Error('disk full');
+    });
+
+    await expect(writeFileAtomic(target, 'new')).rejects.toThrow('disk full');
+
+    expect(fs.readFileSync(target, 'utf8')).toBe('old');
+    expect(fs.readdirSync(dir)).toEqual(['scripts.json']);
+  });
+
+  it('removes the temp file and keeps the old file when the write throws', async () => {
+    vi.spyOn(fs, 'writeSync').mockImplementation(() => {
+      throw new Error('write failed');
+    });
+
+    await expect(writeFileAtomic(target, 'new')).rejects.toThrow('write failed');
+
+    expect(fs.readFileSync(target, 'utf8')).toBe('old');
+    expect(fs.readdirSync(dir)).toEqual(['scripts.json']);
+  });
+});
+
+describe('saveConfigToFile', () => {
+  let dir: string;
+  let target: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'config-utils-test-'));
+    target = path.join(dir, 'scripts.json');
+    fs.writeFileSync(target, 'old');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  it('writes pretty JSON and keeps extra fields', async () => {
+    const cfg = config(validProject({ commitPrefix: 'x' }));
+
+    expect(await saveConfigToFile(target, cfg)).toEqual({ success: true });
+
+    expect(fs.readFileSync(target, 'utf8')).toBe(JSON.stringify(cfg, null, 2));
+  });
+
+  it('does not touch the file when validation fails', async () => {
+    const result = await saveConfigToFile(target, config(validProject({ envs: [] })));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Invalid config: projects[0] ("Pass").envs: must be a non-empty array of non-empty strings');
+    expect(fs.readFileSync(target, 'utf8')).toBe('old');
+    expect(fs.readdirSync(dir)).toEqual(['scripts.json']);
+  });
+
+  it('returns the write error instead of throwing', async () => {
+    vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      throw Object.assign(new Error('read-only'), { code: 'EROFS' });
+    });
+
+    const result = await saveConfigToFile(target, config(validProject()));
+
+    expect(result).toEqual({ success: false, error: 'read-only' });
+    expect(fs.readFileSync(target, 'utf8')).toBe('old');
   });
 });
