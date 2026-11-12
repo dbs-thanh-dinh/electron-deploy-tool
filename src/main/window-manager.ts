@@ -82,9 +82,9 @@ export class WindowManager {
     });
   }
 
-  broadcastConfigUpdate(): void {
+  broadcastConfigUpdate(excludeWebContentsId?: number): void {
     this.windows.forEach(win => {
-      if (!win.isDestroyed()) {
+      if (!win.isDestroyed() && win.webContents.id !== excludeWebContentsId) {
         win.webContents.send('config-updated');
       }
     });

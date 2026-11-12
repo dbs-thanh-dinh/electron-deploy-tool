@@ -109,7 +109,7 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     try {
       const scriptsPath = getScriptsPath();
       fs.writeFileSync(scriptsPath, JSON.stringify(config, null, 2), 'utf8');
-      windowManager.broadcastConfigUpdate();
+      windowManager.broadcastConfigUpdate(event.sender.id);
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message };

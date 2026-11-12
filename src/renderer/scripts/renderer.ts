@@ -13,8 +13,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Listen for config updates from other windows
   window.api.onConfigUpdated(() => {
-    console.log("Config updated from another window, reloading...");
-    window.location.reload();
+    console.log("Config updated from another window, refreshing...");
+    refreshConfigFromOtherWindow();
   });
 });
 
@@ -40,10 +40,10 @@ function initNavigation() {
         targetPage.classList.add("active");
         switch (pageName) {
           case "deploy":
-            loadDeployConfig();
+            if (!isDeploying) refreshDeployConfig();
             break;
           case "projects":
-            loadProjectsConfig();
+            loadProjectsConfig().then(() => renderProjectsList());
             break;
           case "history":
             loadLogFiles();
@@ -103,6 +103,9 @@ function initTheme() {
 let currentConfig: any = null;
 let activeDeployments: string[] = [];
 let allBranches: string[] = []; // Store all branches for filtering
+let isDeploying = false; // A deploy started from this window is in progress
+let pendingConfigRefresh = false; // Config changed elsewhere while deploying
+
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -112,6 +115,100 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, "&#39;");
 }
 
+async function refreshConfigFromOtherWindow() {
+  if (isDeploying) {
+    // Apply once the running deploy finishes so its log is not lost
+    pendingConfigRefresh = true;
+    return;
+  }
+  pendingConfigRefresh = false;
+
+  await refreshDeployConfig();
+  await loadProjectsConfig();
+
+  // Editing index may no longer point to the same project
+  if (editingProjectIndex !== null) {
+    hideForm();
+  }
+  renderProjectsList();
+}
+
+// Reload config for the deploy page while keeping the selected project and options when still valid
+async function refreshDeployConfig() {
+  const projectSelect = document.getElementById("projectSelect") as HTMLSelectElement;
+  const selectedName = projectSelect.value;
+
+  await loadDeployConfig();
+
+  const project = currentConfig?.projects?.find((p: any) => p.name === selectedName);
+  if (project) {
+    projectSelect.value = selectedName;
+    populateProjectOptions(project, true);
+  } else {
+    resetDeployDependents();
+  }
+}
+
+function resetDeployDependents() {
+  const branchFilter = document.getElementById("branchFilter") as HTMLInputElement;
+  const branchSelect = document.getElementById("branchSelect") as HTMLSelectElement;
+  const envSelect = document.getElementById("envSelect") as HTMLSelectElement;
+  const typeSelect = document.getElementById("typeSelect") as HTMLSelectElement;
+  const commitTemplate = document.getElementById("commitTemplate") as HTMLInputElement;
+  const fileContentTemplate = document.getElementById("fileContentTemplate") as HTMLInputElement;
+
+  allBranches = [];
+  branchFilter.value = "";
+  branchFilter.disabled = true;
+  branchSelect.innerHTML = '<option value="">Select branch...</option>';
+  branchSelect.disabled = true;
+  envSelect.innerHTML = '<option value="">Select environment...</option>';
+  envSelect.disabled = true;
+  typeSelect.innerHTML = '<option value="">Select type...</option>';
+  typeSelect.disabled = true;
+  commitTemplate.value = "";
+  commitTemplate.disabled = true;
+  fileContentTemplate.value = "";
+  fileContentTemplate.disabled = true;
+  updateDeployButtonState();
+}
+
+// Fill env / type / template controls for a project; keeps the current choice only when preserveSelection is set
+function populateProjectOptions(project: any, preserveSelection = false) {
+  const envSelect = document.getElementById("envSelect") as HTMLSelectElement;
+  const typeSelect = document.getElementById("typeSelect") as HTMLSelectElement;
+  const commitTemplate = document.getElementById("commitTemplate") as HTMLInputElement;
+  const fileContentTemplate = document.getElementById("fileContentTemplate") as HTMLInputElement;
+  const previousEnv = preserveSelection ? envSelect.value : "";
+  const previousType = preserveSelection ? typeSelect.value : "";
+
+  envSelect.innerHTML = '<option value="">Select environment...</option>';
+  project.envs.forEach((env: string) => {
+    const option = document.createElement("option");
+    option.value = env;
+    option.textContent = env;
+    envSelect.appendChild(option);
+  });
+  if (project.envs.includes(previousEnv)) envSelect.value = previousEnv;
+  envSelect.disabled = false;
+
+  typeSelect.innerHTML = '<option value="">Select type...</option>';
+  project.deployTypes.forEach((type: string) => {
+    const option = document.createElement("option");
+    option.value = type;
+    option.textContent = type;
+    typeSelect.appendChild(option);
+  });
+  if (project.deployTypes.includes(previousType)) typeSelect.value = previousType;
+  typeSelect.disabled = false;
+
+  commitTemplate.value = project.commitTemplate;
+  commitTemplate.disabled = false;
+  fileContentTemplate.value = project.fileContentTemplate;
+  fileContentTemplate.disabled = false;
+
+  updateDeployButtonState();
+}
 
 async function initDeployPage() {
   await loadDeployConfig();
@@ -166,6 +263,7 @@ function setupDeployEventListeners() {
   projectSelect.addEventListener("change", async () => {
     const projectName = projectSelect.value;
     if (!projectName) {
+      resetDeployDependents();
       return;
     }
 
@@ -202,33 +300,7 @@ function setupDeployEventListeners() {
       branchFilter.value = '';
     }
 
-    // Populate envs
-    envSelect.innerHTML = '<option value="">Select environment...</option>';
-    project.envs.forEach((env: string) => {
-      const option = document.createElement("option");
-      option.value = env;
-      option.textContent = env;
-      envSelect.appendChild(option);
-    });
-    envSelect.disabled = false;
-
-    // Populate deploy types
-    typeSelect.innerHTML = '<option value="">Select type...</option>';
-    project.deployTypes.forEach((type: string) => {
-      const option = document.createElement("option");
-      option.value = type;
-      option.textContent = type;
-      typeSelect.appendChild(option);
-    });
-    typeSelect.disabled = false;
-
-    // Set commit and file content templates
-    commitTemplate.value = project.commitTemplate;
-    commitTemplate.disabled = false;
-    fileContentTemplate.value = project.fileContentTemplate;
-    fileContentTemplate.disabled = false;
-
-    updateDeployButtonState();
+    populateProjectOptions(project);
   });
 
   branchFilter.addEventListener('input', handleBranchFilter);
