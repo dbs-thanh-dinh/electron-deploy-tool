@@ -14,6 +14,11 @@ interface UpdateInfoI {
   githubReleaseUrl?: string;
 }
 
+// load-config resolves this instead of a config when reading/parsing scripts.json fails
+interface ConfigErrorI {
+  error: string;
+}
+
 interface ConfirmDialogOptionsI {
   title: string;
   message: string;
@@ -29,8 +34,8 @@ interface Window {
     onUpdateAvailable: (callback: (data: UpdateInfoI) => void) => void;
 
     // Config operations
-    // On failure the main process resolves `{ error }` instead of a config
-    loadConfig: () => Promise<ConfigI & { error?: string }>;
+    // Narrow with `'error' in result`
+    loadConfig: () => Promise<ConfigI | ConfigErrorI>;
     saveConfig: (config: ConfigI) => Promise<{ success: boolean; error?: string }>;
     
     // Deploy operations

@@ -6,6 +6,7 @@ import { DeployService, DeployOptions } from './deploy-service';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { ConfigI } from './interface';
+import { applyProjectDefaults, validateConfig, writeFileAtomic } from './config-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -92,17 +93,7 @@ export function registerIpcHandlers(windowManager: WindowManager) {
       }
       const config = fs.readFileSync(scriptsPath, 'utf8');
       const scripts: ConfigI = JSON.parse(config);
-      scripts.projects = (scripts.projects || [])
-        .map((project) => {
-          if (!project.branchFilter) project.branchFilter = '';
-          if (!project.commitFormat) project.commitFormat = 'v1';
-          if (!project.commitTemplate) project.commitTemplate = 'deploy: {env}, {type}';
-          if (!project.fileContentFormat) project.fileContentFormat = 'default';
-          if (!project.fileContentTemplate) project.fileContentTemplate = project.commitTemplate;
-          if (project.smartAppend === undefined) project.smartAppend = false;
-          if (!project.cicdFileName) project.cicdFileName = 'CICD.txt';
-          return project;
-        });
+      scripts.projects = (scripts.projects || []).map(applyProjectDefaults);
       return scripts;
     } catch (err: unknown) {
       console.error('Error loading config:', err);
@@ -111,10 +102,15 @@ export function registerIpcHandlers(windowManager: WindowManager) {
   });
 
   // Save configuration
-  ipcMain.handle('save-config', async (event, config) => {
+  ipcMain.handle('save-config', async (event, config: unknown) => {
     try {
+      // Reject invalid config before touching the file on disk
+      const validationError = validateConfig(config);
+      if (validationError) {
+        return { success: false, error: `Invalid config: ${validationError}` };
+      }
       const scriptsPath = getScriptsPath();
-      fs.writeFileSync(scriptsPath, JSON.stringify(config, null, 2), 'utf8');
+      await writeFileAtomic(scriptsPath, JSON.stringify(config, null, 2));
       windowManager.broadcastConfigUpdate(event.sender.id);
       return { success: true };
     } catch (err: unknown) {

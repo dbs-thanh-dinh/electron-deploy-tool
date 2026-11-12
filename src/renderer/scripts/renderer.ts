@@ -227,7 +227,15 @@ async function initDeployPage() {
 
 async function loadDeployConfig() {
   try {
-    currentConfig = await window.api.loadConfig();
+    const config = await window.api.loadConfig();
+    if ('error' in config) {
+      // Alert only here: the projects page loads the same config and reports to the console
+      currentConfig = null;
+      console.error("Failed to load config:", config.error);
+      alert(`Failed to load configuration: ${config.error}`);
+    } else {
+      currentConfig = config;
+    }
     populateProjectSelect();
   } catch (err) {
     console.error("Failed to load config:", err);
@@ -506,7 +514,13 @@ async function initProjectsPage() {
 
 async function loadProjectsConfig() {
   try {
-    projectsConfig = await window.api.loadConfig();
+    const config = await window.api.loadConfig();
+    if ('error' in config) {
+      projectsConfig = null;
+      console.error("Failed to load config:", config.error);
+    } else {
+      projectsConfig = config;
+    }
   } catch (err) {
     console.error("Failed to load config:", err);
     alert("Failed to load configuration");
@@ -636,8 +650,11 @@ async function deleteProject(index: number) {
   if (editingProjectIndex !== null) {
     hideForm();
   }
+  const snapshot = structuredClone(projectsConfig!.projects);
   projectsConfig!.projects.splice(index, 1);
-  await saveProjectsConfig();
+  if (!(await saveProjectsConfig())) {
+    projectsConfig!.projects = snapshot;
+  }
   renderProjectsList();
 }
 
@@ -725,6 +742,8 @@ async function saveProject() {
     return;
   }
 
+  // Keep a snapshot so a rejected save does not leave unsaved changes in memory
+  const snapshot = structuredClone(projectsConfig.projects);
   if (editingProjectIndex !== null) {
     // Edit existing
     projectsConfig.projects[editingProjectIndex] = project;
@@ -733,7 +752,10 @@ async function saveProject() {
     projectsConfig.projects.push(project);
   }
 
-  await saveProjectsConfig();
+  if (!(await saveProjectsConfig())) {
+    projectsConfig.projects = snapshot;
+    return; // keep the form open so the user can fix the input
+  }
   hideForm();
   renderProjectsList();
 }
@@ -785,14 +807,18 @@ async function handleFileContentFormatSelectChange() {
   }
 }
 
-async function saveProjectsConfig() {
+// Returns true when the config was saved
+async function saveProjectsConfig(): Promise<boolean> {
   try {
     const result = await window.api.saveConfig(projectsConfig!);
     if (!result.success) {
       alert(`Failed to save config: ${result.error}`);
+      return false;
     }
+    return true;
   } catch (err: unknown) {
     alert(`Error saving config: ${(err as Error).message}`);
+    return false;
   }
 }
 
