@@ -132,6 +132,24 @@ describe('DeployService.deploy', () => {
     expect(joined(result.logs)).toContain('Current branch: main');
   });
 
+  it('streams every log line to onLog as it is written, matching the returned logs', async () => {
+    const streamed: string[] = [];
+
+    const result = await service.deploy(makeOptions({ dryRun: true }), (line) => streamed.push(line));
+
+    expect(result.success).toBe(true);
+    expect(streamed).toEqual(result.logs);
+  });
+
+  it('keeps deploying when the onLog listener throws', async () => {
+    const result = await service.deploy(makeOptions({ dryRun: true }), () => {
+      throw new Error('window closed');
+    });
+
+    expect(result.success).toBe(true);
+    expect(headMessage(workDir)).toBe('deploy: dev, api');
+  });
+
   it('handles a CICD file in a sub-directory and a glob-like file name literally', async () => {
     fs.mkdirSync(path.join(workDir, 'ci'));
     fs.writeFileSync(path.join(workDir, 'ci', 'CICD[1].txt'), 'deploy: init\n');

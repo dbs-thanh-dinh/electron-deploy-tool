@@ -77,6 +77,11 @@
                   <option value="">Select branch...</option>
                 </select>
               </div>
+              <div id="branchLoading" class="branch-loading" style="display: none;">
+                <span class="spinner-sm"></span>
+                <span>Fetching branches...</span>
+                <button type="button" id="cancelBranchesBtn" class="btn btn-small">Cancel</button>
+              </div>
             </div>
           </div>
 
@@ -293,7 +298,7 @@
   <!-- Loading Spinner Overlay -->
   <div id="loadingOverlay" class="loading-overlay" style="display: none;">
     <div class="spinner"></div>
-    <p>Deploying...</p>
+    <p id="loadingText">Deploying...</p>
   </div>
 
   <!-- Update Available Notification Popup -->

@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('api', {
   
   // Git operations
   getBranches: (repoPath: string) => ipcRenderer.invoke('get-branches', repoPath),
+  cancelGetBranches: () => ipcRenderer.invoke('cancel-get-branches'),
 
   // Notifications
   showNotification: (title: string, body: string) => {
@@ -56,6 +57,12 @@ contextBridge.exposeInMainWorld('api', {
     });
   },
   
+  onDeployLog: (callback: (line: string) => void) => {
+    ipcRenderer.on('deploy-log', (event, line: string) => {
+      callback(line);
+    });
+  },
+
   onConfigUpdated: (callback: () => void) => {
     ipcRenderer.on('config-updated', () => {
       callback();
