@@ -47,13 +47,11 @@ export class DeployService {
   }
 
   private getLogFilePath(): string {
-    const date = new Date().toISOString().split('T')[0];
-    return path.join(this.logDir, `deploy-${date}.log`);
+    return path.join(this.logDir, `deploy-${getLocalDate()}.log`);
   }
 
   private log(msg: string, logs: string[]): void {
-    const time = new Date().toISOString();
-    const line = `[${time}] ${msg}`;
+    const line = `[${getLocalTimestamp()}] ${msg}`;
     logs.push(line);
     
     // Also write to file
