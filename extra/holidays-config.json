@@ -69,7 +69,7 @@
       "id": "labor-day",
       "name": "Ngày Quốc tế Lao động",
       "type": "solar",
-      "date": "1/5",
+      "date": "5/1",
       "daysBefore": 3,
       "daysAfter": 1,
       "theme": {

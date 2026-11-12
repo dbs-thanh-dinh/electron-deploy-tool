@@ -1,8 +1,25 @@
-import { execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { ProjectI } from './interface';
+
+const execFileAsync = promisify(execFile);
+
+const GIT_TIMEOUT_MS = 5 * 60 * 1000;
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function getLocalDate(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+}
+
+function getLocalTimestamp(now: Date = new Date()): string {
+  return `${getLocalDate(now)} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+}
 
 export interface DeployOptions {
   project: ProjectI;
@@ -30,13 +47,11 @@ export class DeployService {
   }
 
   private getLogFilePath(): string {
-    const date = new Date().toISOString().split('T')[0];
-    return path.join(this.logDir, `deploy-${date}.log`);
+    return path.join(this.logDir, `deploy-${getLocalDate()}.log`);
   }
 
   private log(msg: string, logs: string[]): void {
-    const time = new Date().toISOString();
-    const line = `[${time}] ${msg}`;
+    const line = `[${getLocalTimestamp()}] ${msg}`;
     logs.push(line);
     
     // Also write to file
@@ -47,21 +62,24 @@ export class DeployService {
     }
   }
 
-  private runCommand(cmd: string, cwd: string, logs: string[]): boolean {
+  private async runGit(args: string[], cwd: string, logs: string[]): Promise<boolean> {
     try {
-      this.log(`$ ${cmd}`, logs);
-      const output = execSync(cmd, { 
-        cwd, 
-        stdio: 'pipe',
-        encoding: 'utf8'
-      }).toString().trim();
-      
+      this.log(`$ git ${args.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`, logs);
+      const { stdout } = await execFileAsync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        timeout: GIT_TIMEOUT_MS,
+        windowsHide: true,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      });
+
+      const output = stdout.toString().trim();
       if (output) {
         this.log(output, logs);
       }
       return true;
     } catch (err: any) {
-      this.log(`❌ Error running: ${cmd}`, logs);
+      this.log(`❌ Error running: git ${args[0]}`, logs);
       const errorMsg = err.stderr?.toString() || err.message;
       this.log(errorMsg, logs);
       return false;
@@ -75,8 +93,8 @@ export class DeployService {
     }
 
     return commitMessage
-      .replace('{env}', env)
-      .replace('{type}', type);
+      .replace(/\{env\}/g, () => env)
+      .replace(/\{type\}/g, () => type);
   }
 
   private getFileContent(fileContentTemplate: string, env: string, type: string): string {
@@ -85,15 +103,16 @@ export class DeployService {
       fileContent = fileContent.replace(/\{type\}\s*,\s*|\s*,\s*\{type\}/gi, "");
     }
     const now = new Date();
-    const dateDMY = `${now.getDate()}-${now.getMonth() + 1}-${now.getFullYear()}`
-    const dateYMD = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`
+    const yyyy = String(now.getFullYear());
+    const mm = pad2(now.getMonth() + 1);
+    const dd = pad2(now.getDate());
     return fileContent
-      .replace('{date:y-m-d}', dateYMD)
-      .replace('{date:y/m/d}', dateYMD)
-      .replace('{date:d-m-y}', dateDMY)
-      .replace('{date:d/m/y}', dateDMY)
-      .replace('{env}', env)
-      .replace('{type}', type);
+      .replace(/\{date:y-m-d\}/g, () => `${yyyy}-${mm}-${dd}`)
+      .replace(/\{date:y\/m\/d\}/g, () => `${yyyy}/${mm}/${dd}`)
+      .replace(/\{date:d-m-y\}/g, () => `${dd}-${mm}-${yyyy}`)
+      .replace(/\{date:d\/m\/y\}/g, () => `${dd}/${mm}/${yyyy}`)
+      .replace(/\{env\}/g, () => env)
+      .replace(/\{type\}/g, () => type);
   }
 
   async deploy(options: DeployOptions): Promise<DeployResult> {
@@ -116,19 +135,33 @@ export class DeployService {
         throw new Error(`Repository path does not exist: ${repoPath}`);
       }
 
+      if (!branch || branch.startsWith('-')) {
+        throw new Error(`Invalid branch name: ${branch}`);
+      }
+      const cicdPath = path.resolve(repoPath, project.cicdFileName);
+      const relativeCicd = path.relative(path.resolve(repoPath), cicdPath);
+      if (!relativeCicd || relativeCicd.startsWith('..') || path.isAbsolute(relativeCicd)) {
+        throw new Error(`Invalid CICD file name: ${project.cicdFileName}`);
+      }
+
       // Git operations
-      if (!this.runCommand('git stash save "Auto stash before deploy"', repoPath, logs)) {
+      if (!(await this.runGit(['stash', 'save', 'Auto stash before deploy'], repoPath, logs))) {
         throw new Error('Git stash failed');
       }
 
-      const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: repoPath, encoding: 'utf8' }).toString().trim();
-      if (currentBranch == branch) {
+      const { stdout: currentBranchOut } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd: repoPath,
+        encoding: 'utf8',
+        windowsHide: true,
+      });
+      const currentBranch = currentBranchOut.toString().trim();
+      if (currentBranch === branch) {
         this.log(`Current branch: ${currentBranch}`, logs);
-      } else if (!this.runCommand(`git checkout ${branch}`, repoPath, logs)) {
+      } else if (!(await this.runGit(['checkout', branch], repoPath, logs))) {
         throw new Error('Git checkout failed');
       }
 
-      if (!this.runCommand('git pull', repoPath, logs)) {
+      if (!(await this.runGit(['pull'], repoPath, logs))) {
         throw new Error('Git pull failed');
       }
 
@@ -137,12 +170,12 @@ export class DeployService {
       this.updateCICDFile(logs, project, cicdFileContent);
       
       // Commit
-      if (!this.runCommand(`git add ${project.cicdFileName}`, repoPath, logs)) {
+      if (!(await this.runGit(['add', '--', project.cicdFileName], repoPath, logs))) {
         throw new Error('Git add failed');
       }
       
       const commitMsg = this.getCommitMsg(commitTemplate, env, type);
-      if (!this.runCommand(`git commit -m "${commitMsg}"`, repoPath, logs)) {
+      if (!(await this.runGit(['commit', '-m', commitMsg], repoPath, logs))) {
         throw new Error('Git commit failed');
       }
 
@@ -151,7 +184,7 @@ export class DeployService {
         this.log('DRY-RUN: Skipping push step', logs);
         this.log('✅ SUCCESS: Dry-run completed (no push)', logs);
       } else {
-        if (!this.runCommand('git push', repoPath, logs)) {
+        if (!(await this.runGit(['push'], repoPath, logs))) {
           throw new Error('Git push failed');
         }
         this.log('✅ SUCCESS: Deploy completed!', logs);
@@ -172,6 +205,7 @@ export class DeployService {
       throw new Error(`${project.cicdFileName} does not exist in repo`);
     }
     const content = fs.readFileSync(cicdPath, 'utf8');
+    const eol = content.includes('\r\n') ? '\r\n' : '\n';
     const lines = content.split(/\r?\n/);
 
     const updateCommitMsg = (lines: string[], index: number, commitMsg: string) => {
@@ -200,7 +234,7 @@ export class DeployService {
       } else {
         updateCommitMsg(lines, lines.length - 1, commitMsg);
       }
-      fs.writeFileSync(cicdPath, lines.join('\n'));
+      fs.writeFileSync(cicdPath, lines.join(eol));
     }
   }
 
@@ -222,7 +256,11 @@ export class DeployService {
 
   readLogFile(filename: string): string {
     try {
-      const filePath = path.join(this.logDir, filename);
+      const safeName = path.basename(filename);
+      if (safeName !== filename || !safeName.startsWith('deploy-') || !safeName.endsWith('.log')) {
+        return 'Error reading log file: invalid file name';
+      }
+      const filePath = path.join(this.logDir, safeName);
       return fs.readFileSync(filePath, 'utf8');
     } catch (err) {
       return `Error reading log file: ${err}`;

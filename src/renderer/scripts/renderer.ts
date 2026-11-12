@@ -13,8 +13,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Listen for config updates from other windows
   window.api.onConfigUpdated(() => {
-    console.log("Config updated from another window, reloading...");
-    window.location.reload();
+    console.log("Config updated from another window, refreshing...");
+    refreshConfigFromOtherWindow();
   });
 });
 
@@ -40,10 +40,10 @@ function initNavigation() {
         targetPage.classList.add("active");
         switch (pageName) {
           case "deploy":
-            loadDeployConfig();
+            if (!isDeploying) refreshDeployConfig();
             break;
           case "projects":
-            loadProjectsConfig();
+            loadProjectsConfig().then(() => renderProjectsList());
             break;
           case "history":
             loadLogFiles();
@@ -103,6 +103,112 @@ function initTheme() {
 let currentConfig: any = null;
 let activeDeployments: string[] = [];
 let allBranches: string[] = []; // Store all branches for filtering
+let isDeploying = false; // A deploy started from this window is in progress
+let pendingConfigRefresh = false; // Config changed elsewhere while deploying
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+async function refreshConfigFromOtherWindow() {
+  if (isDeploying) {
+    // Apply once the running deploy finishes so its log is not lost
+    pendingConfigRefresh = true;
+    return;
+  }
+  pendingConfigRefresh = false;
+
+  await refreshDeployConfig();
+  await loadProjectsConfig();
+
+  // Editing index may no longer point to the same project
+  if (editingProjectIndex !== null) {
+    hideForm();
+  }
+  renderProjectsList();
+}
+
+// Reload config for the deploy page while keeping the selected project and options when still valid
+async function refreshDeployConfig() {
+  const projectSelect = document.getElementById("projectSelect") as HTMLSelectElement;
+  const selectedName = projectSelect.value;
+
+  await loadDeployConfig();
+
+  const project = currentConfig?.projects?.find((p: any) => p.name === selectedName);
+  if (project) {
+    projectSelect.value = selectedName;
+    populateProjectOptions(project, true);
+  } else {
+    resetDeployDependents();
+  }
+}
+
+function resetDeployDependents() {
+  const branchFilter = document.getElementById("branchFilter") as HTMLInputElement;
+  const branchSelect = document.getElementById("branchSelect") as HTMLSelectElement;
+  const envSelect = document.getElementById("envSelect") as HTMLSelectElement;
+  const typeSelect = document.getElementById("typeSelect") as HTMLSelectElement;
+  const commitTemplate = document.getElementById("commitTemplate") as HTMLInputElement;
+  const fileContentTemplate = document.getElementById("fileContentTemplate") as HTMLInputElement;
+
+  allBranches = [];
+  branchFilter.value = "";
+  branchFilter.disabled = true;
+  branchSelect.innerHTML = '<option value="">Select branch...</option>';
+  branchSelect.disabled = true;
+  envSelect.innerHTML = '<option value="">Select environment...</option>';
+  envSelect.disabled = true;
+  typeSelect.innerHTML = '<option value="">Select type...</option>';
+  typeSelect.disabled = true;
+  commitTemplate.value = "";
+  commitTemplate.disabled = true;
+  fileContentTemplate.value = "";
+  fileContentTemplate.disabled = true;
+  updateDeployButtonState();
+}
+
+// Fill env / type / template controls for a project; keeps the current choice only when preserveSelection is set
+function populateProjectOptions(project: any, preserveSelection = false) {
+  const envSelect = document.getElementById("envSelect") as HTMLSelectElement;
+  const typeSelect = document.getElementById("typeSelect") as HTMLSelectElement;
+  const commitTemplate = document.getElementById("commitTemplate") as HTMLInputElement;
+  const fileContentTemplate = document.getElementById("fileContentTemplate") as HTMLInputElement;
+  const previousEnv = preserveSelection ? envSelect.value : "";
+  const previousType = preserveSelection ? typeSelect.value : "";
+
+  envSelect.innerHTML = '<option value="">Select environment...</option>';
+  project.envs.forEach((env: string) => {
+    const option = document.createElement("option");
+    option.value = env;
+    option.textContent = env;
+    envSelect.appendChild(option);
+  });
+  if (project.envs.includes(previousEnv)) envSelect.value = previousEnv;
+  envSelect.disabled = false;
+
+  typeSelect.innerHTML = '<option value="">Select type...</option>';
+  project.deployTypes.forEach((type: string) => {
+    const option = document.createElement("option");
+    option.value = type;
+    option.textContent = type;
+    typeSelect.appendChild(option);
+  });
+  if (project.deployTypes.includes(previousType)) typeSelect.value = previousType;
+  typeSelect.disabled = false;
+
+  commitTemplate.value = project.commitTemplate;
+  commitTemplate.disabled = false;
+  fileContentTemplate.value = project.fileContentTemplate;
+  fileContentTemplate.disabled = false;
+
+  updateDeployButtonState();
+}
 
 async function initDeployPage() {
   await loadDeployConfig();
@@ -157,6 +263,7 @@ function setupDeployEventListeners() {
   projectSelect.addEventListener("change", async () => {
     const projectName = projectSelect.value;
     if (!projectName) {
+      resetDeployDependents();
       return;
     }
 
@@ -177,6 +284,8 @@ function setupDeployEventListeners() {
     branchSelect.innerHTML = '<option value="">Loading branches...</option>';
 
     const branches = await window.api.getBranches(project.repoPath);
+    // Ignore stale result if the user picked another project while loading
+    if (projectSelect.value !== projectName) return;
     allBranches = branches; // Store for filtering
 
     // Populate branches
@@ -191,33 +300,7 @@ function setupDeployEventListeners() {
       branchFilter.value = '';
     }
 
-    // Populate envs
-    envSelect.innerHTML = '<option value="">Select environment...</option>';
-    project.envs.forEach((env: string) => {
-      const option = document.createElement("option");
-      option.value = env;
-      option.textContent = env;
-      envSelect.appendChild(option);
-    });
-    envSelect.disabled = false;
-
-    // Populate deploy types
-    typeSelect.innerHTML = '<option value="">Select type...</option>';
-    project.deployTypes.forEach((type: string) => {
-      const option = document.createElement("option");
-      option.value = type;
-      option.textContent = type;
-      typeSelect.appendChild(option);
-    });
-    typeSelect.disabled = false;
-
-    // Set commit and file content templates
-    commitTemplate.value = project.commitTemplate;
-    commitTemplate.disabled = false;
-    fileContentTemplate.value = project.fileContentTemplate;
-    fileContentTemplate.disabled = false;
-
-    updateDeployButtonState();
+    populateProjectOptions(project);
   });
 
   branchFilter.addEventListener('input', handleBranchFilter);
@@ -242,9 +325,12 @@ function updateDeployButtonState() {
   const projectName = projectSelect.value;
   const isProjectBeingDeployed = projectName && activeDeployments.includes(projectName);
 
-  if (isProjectBeingDeployed) {
+  if (isDeploying) {
     deployBtn.disabled = true;
-    deployBtn.querySelector(".btn-text")!.textContent = `${projectName} is being deployed in another window`;
+    deployBtn.querySelector(".btn-text")!.textContent = "Deploying...";
+  } else if (isProjectBeingDeployed) {
+    deployBtn.disabled = true;
+    deployBtn.querySelector(".btn-text")!.textContent = `${projectName} is being deployed`;
   } else if (projectName && branchSelect.value && envSelect.value && typeSelect.value) {
     deployBtn.disabled = false;
     deployBtn.querySelector(".btn-text")!.textContent = "Start Deploy";
@@ -304,9 +390,22 @@ function clearLogOutput() {
 }
 
 async function handleDeploy() {
-  // Clear previous logs
-  clearLogOutput();
+  if (isDeploying) return;
+  isDeploying = true;
+  updateDeployButtonState();
 
+  try {
+    await runDeploy();
+  } finally {
+    isDeploying = false;
+    updateDeployButtonState();
+    if (pendingConfigRefresh) {
+      refreshConfigFromOtherWindow();
+    }
+  }
+}
+
+async function runDeploy() {
   const projectSelect = document.getElementById("projectSelect") as HTMLSelectElement;
   const branchSelect = document.getElementById("branchSelect") as HTMLSelectElement;
   const envSelect = document.getElementById("envSelect") as HTMLSelectElement;
@@ -328,7 +427,7 @@ async function handleDeploy() {
   // Check if can deploy
   const canDeploy = await window.api.canDeploy(projectName);
   if (!canDeploy) {
-    alert(`Project ${projectName} is already being deployed in another window`);
+    alert(`Project ${projectName} is already being deployed`);
     return;
   }
 
@@ -338,6 +437,7 @@ async function handleDeploy() {
   const confirm = await window.api.openDialogConfirm({
     title: "Confirm Deploy",
     message: `Deploy project "${projectName}" to environment "${env}" with type "${type}"?`,
+    detail: `Branch: ${branch}${dryRun ? "\nMode: DRY RUN (no push)" : ""}`,
   });
   if (!confirm) return;
 
@@ -427,20 +527,20 @@ function renderProjectsList() {
     card.className = "project-card";
     card.innerHTML = `
       <div class="project-card-header">
-        <h3>${project.name}</h3>
+        <h3>${escapeHtml(project.name)}</h3>
         <div class="project-card-actions">
           <button class="btn btn-small edit-btn" data-index="${index}">Edit</button>
           <button class="btn btn-small btn-danger delete-btn" data-index="${index}">Delete</button>
         </div>
       </div>
       <div class="project-card-body">
-        <div class="project-detail"><strong>Path:</strong> ${project.repoPath}</div>
-        <div class="project-detail"><strong>Environments:</strong> ${project.envs.join(", ")}</div>
-        <div class="project-detail"><strong>Deploy Types:</strong> ${project.deployTypes.join(", ")}</div>
-        <div class="project-detail"><strong>Branch filter:</strong> ${project.branchFilter}</div>
-        <div class="project-detail"><strong>Commit Template:</strong> ${project.commitTemplate}</div>
-        <div class="project-detail"><strong>CICD File Name:</strong> ${project.cicdFileName}</div>
-        <div class="project-detail"><strong>File Content Template:</strong> ${project.fileContentTemplate}</div>
+        <div class="project-detail"><strong>Path:</strong> ${escapeHtml(project.repoPath)}</div>
+        <div class="project-detail"><strong>Environments:</strong> ${escapeHtml(project.envs.join(", "))}</div>
+        <div class="project-detail"><strong>Deploy Types:</strong> ${escapeHtml(project.deployTypes.join(", "))}</div>
+        <div class="project-detail"><strong>Branch filter:</strong> ${escapeHtml(project.branchFilter)}</div>
+        <div class="project-detail"><strong>Commit Template:</strong> ${escapeHtml(project.commitTemplate)}</div>
+        <div class="project-detail"><strong>CICD File Name:</strong> ${escapeHtml(project.cicdFileName)}</div>
+        <div class="project-detail"><strong>File Content Template:</strong> ${escapeHtml(project.fileContentTemplate)}</div>
         <div class="project-detail"><strong>Smart Append:</strong> ${project.smartAppend ? "Yes" : "No"}</div>
       </div>
     `;
@@ -531,6 +631,10 @@ async function deleteProject(index: number) {
     return;
   }
 
+  // Editing index may point to a different project after the splice
+  if (editingProjectIndex !== null) {
+    hideForm();
+  }
   projectsConfig.projects.splice(index, 1);
   await saveProjectsConfig();
   renderProjectsList();
@@ -548,6 +652,19 @@ function clearProjectForm() {
   (document.getElementById("repoPath") as HTMLInputElement).value = "";
   (document.getElementById("envs") as HTMLInputElement).value = "";
   (document.getElementById("deployTypes") as HTMLInputElement).value = "";
+  (document.getElementById("projectBranchFilter") as HTMLInputElement).value = "";
+  (document.getElementById("projectCICDFileName") as HTMLInputElement).value = "CICD.txt";
+  (document.getElementById("projectFileContentSmartAppend") as HTMLInputElement).checked = false;
+
+  (document.getElementById("projectCommitFormat") as HTMLSelectElement).value = "v1";
+  const commitTemplateInput = document.getElementById("projectCommitTemplate") as HTMLInputElement;
+  commitTemplateInput.value = "deploy: {env}, {type}";
+  commitTemplateInput.disabled = true;
+
+  (document.getElementById("projectFileContentFormat") as HTMLSelectElement).value = "default";
+  const fileContentTemplateInput = document.getElementById("projectFileContentTemplate") as HTMLInputElement;
+  fileContentTemplateInput.value = "deploy: {env}, {type}";
+  fileContentTemplateInput.disabled = true;
 }
 
 async function saveProject() {
@@ -562,6 +679,11 @@ async function saveProject() {
   const fileContentFormat = (document.getElementById("projectFileContentFormat") as HTMLSelectElement).value.trim();
   const fileContentTemplate = (document.getElementById("projectFileContentTemplate") as HTMLInputElement).value.trim();
   const smartAppendCheck = (document.getElementById("projectFileContentSmartAppend") as HTMLInputElement).checked;
+
+  if (!projectsConfig?.projects) {
+    alert("Configuration is not loaded. Please reload the app.");
+    return;
+  }
 
   // Validation
   if (!name || !repoPath || !envsStr || !typesStr || (commitFormat === "custom" && !commitTemplate) || !cicdFileName) {
@@ -597,15 +719,16 @@ async function saveProject() {
     smartAppend: smartAppendCheck,
   };
 
+  if (projectsConfig.projects.some((p: any, i: number) => p.name === name && i !== editingProjectIndex)) {
+    alert(`Project with name "${name}" already exists`);
+    return;
+  }
+
   if (editingProjectIndex !== null) {
     // Edit existing
     projectsConfig.projects[editingProjectIndex] = project;
   } else {
     // Add new
-    if (projectsConfig.projects.some((p: any) => p.name === name)) {
-      alert(`Project with name "${name}" already exists`);
-      return;
-    }
     projectsConfig.projects.push(project);
   }
 
@@ -656,7 +779,8 @@ async function handleFileContentFormatSelectChange() {
     fileContentTemplateInput.disabled = false;
   } else {
     fileContentTemplateInput.disabled = true;
-    fileContentTemplateInput.value = "deploy: {env}, {type}";
+    const commitTemplateInput = document.getElementById("projectCommitTemplate") as HTMLInputElement;
+    fileContentTemplateInput.value = commitTemplateInput.value || "deploy: {env}, {type}";
   }
 }
 

@@ -6,7 +6,6 @@ import fs from 'node:fs';
 import { autoUpdater } from 'electron-updater';
 
 let windowManager: WindowManager;
-let mainWindow: BrowserWindow | null = null;
 
 function createMenu() {
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -87,17 +86,21 @@ function initAutoUpdate() {
       githubReleaseUrl = `https://github.com/${githubConfig.owner}/${githubConfig.repo}/releases/tag/v${info.version}`;
     }
 
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-available', {
-        version: info.version,
-        releaseNotes: info.releaseNotes || '',
-        releaseDate: info.releaseDate || '',
-        githubReleaseUrl: githubReleaseUrl
-      });
-    }
+    windowManager.broadcastUpdateAvailable({
+      version: info.version,
+      releaseNotes: info.releaseNotes || '',
+      releaseDate: info.releaseDate || '',
+      githubReleaseUrl: githubReleaseUrl
+    });
   });
 
-  autoUpdater.checkForUpdates();
+  checkForUpdates();
+}
+
+function checkForUpdates() {
+  autoUpdater.checkForUpdates().catch((error) => {
+    console.warn('Update check failed:', error?.message ?? error);
+  });
 }
 
 app.whenReady().then(() => {
@@ -105,7 +108,7 @@ app.whenReady().then(() => {
   registerIpcHandlers(windowManager);
   createMenu();
   
-  mainWindow = windowManager.createWindow();
+  windowManager.createWindow();
 
   initAutoUpdate();
 
@@ -116,9 +119,7 @@ app.whenReady().then(() => {
   });
 
   // Check for updates every 4 hours
-  setInterval(() => {
-    autoUpdater.checkForUpdates();
-  }, 4 * 60 * 60 * 1000);
+  setInterval(checkForUpdates, 4 * 60 * 60 * 1000);
 });
 
 app.on('window-all-closed', () => {

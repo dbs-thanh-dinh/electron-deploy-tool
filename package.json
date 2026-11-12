@@ -8,7 +8,7 @@
     "copy-static": "copyfiles -u 1 src/renderer/**/*.{html,css} dist",
     "watch": "tsc --watch",
     "start": "npm run build && electron .",
-    "dist": "npm run build && electron-builder --win --x64"
+    "dist": "npm run build && electron-builder --win msi --x64"
   },
   "keywords": [
     "electron",
@@ -47,12 +47,18 @@
     ],
     "win": {
       "target": [
-        "nsis",
-        "portable"
+        "msi",
+        "nsis"
       ],
       "icon": "assets/icon.ico",
-      "publisherName": "ThanhDC",
+      "publisherName": "CN=ThanhDC",
       "legalTrademarks": "Deploy Tool © ThanhDC"
+    },
+    "msi": {
+      "oneClick": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Deploy Tool"
     },
     "nsis": {
       "oneClick": false,

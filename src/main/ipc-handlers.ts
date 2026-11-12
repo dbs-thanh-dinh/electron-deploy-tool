@@ -3,8 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { WindowManager } from './window-manager';
 import { DeployService, DeployOptions } from './deploy-service';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { ConfigI } from './interface';
 
+const execFileAsync = promisify(execFile);
 const deployService = new DeployService();
 const userDataPath = app.getPath('userData');
 
@@ -74,15 +77,12 @@ export function registerIpcHandlers(windowManager: WindowManager) {
       if (!fs.existsSync(scriptsPath)) {
         const scriptsSamplePath = getExtraFilePath('scripts.json');
         if (fs.existsSync(scriptsSamplePath)) {
-          const configSample = fs.readFileSync(scriptsSamplePath, 'utf8');
-          fs.writeFileSync(scriptsPath, configSample);
+          fs.copyFileSync(scriptsSamplePath, scriptsPath);
           console.log('Sample scripts.json copied to user data directory', scriptsSamplePath);
-          return scriptsPath;
         } else {
           console.warn('Sample scripts.json not found, using default config');
+          fs.writeFileSync(scriptsPath, JSON.stringify(configDefault, null, 2), 'utf8');
         }
-        fs.writeFileSync(scriptsPath, JSON.stringify(configDefault, null, 2), 'utf8');
-        return configDefault;
       }
       const config = fs.readFileSync(scriptsPath, 'utf8');
       const scripts: ConfigI = JSON.parse(config);
@@ -109,7 +109,7 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     try {
       const scriptsPath = getScriptsPath();
       fs.writeFileSync(scriptsPath, JSON.stringify(config, null, 2), 'utf8');
-      windowManager.broadcastConfigUpdate();
+      windowManager.broadcastConfigUpdate(event.sender.id);
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -170,24 +170,27 @@ export function registerIpcHandlers(windowManager: WindowManager) {
   // Get branches from git repo
   ipcMain.handle('get-branches', async (event, repoPath: string) => {
     try {
-      const { execSync } = require('child_process');
+      const gitOptions = {
+        cwd: repoPath,
+        encoding: 'utf8' as const,
+        timeout: 2 * 60 * 1000,
+        windowsHide: true,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      };
 
       // Fetch latest branches
-      execSync('git fetch --prune', { cwd: repoPath });
+      await execFileAsync('git', ['fetch', '--prune'], gitOptions);
 
       // Get the list of remote branches
-      const output: string = execSync('git branch -r', { 
-        cwd: repoPath, 
-        encoding: 'utf8' 
-      });
+      const { stdout } = await execFileAsync('git', ['branch', '-r'], gitOptions);
 
       // Parse branches
-      const branches = output
+      const branches = stdout
         .split('\n')
-        .map(b => b.trim().replace('origin/', ''))
+        .map(b => b.trim().replace(/^origin\//, ''))
         .filter(b => b && !b.includes('->'))
         .sort();
-      
+
       return branches;
     } catch (err: any) {
       console.error('Error getting branches:', err);
