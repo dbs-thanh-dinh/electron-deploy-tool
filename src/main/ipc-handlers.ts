@@ -178,6 +178,9 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     branchRequests.get(senderId)?.abort();
     const controller = new AbortController();
     branchRequests.set(senderId, controller);
+    // Stop the fetch if the window is closed meanwhile
+    const onDestroyed = () => controller.abort();
+    event.sender.once('destroyed', onDestroyed);
 
     try {
       const gitOptions = {
@@ -208,6 +211,7 @@ export function registerIpcHandlers(windowManager: WindowManager) {
       if (!controller.signal.aborted) console.error('Error getting branches:', err);
       return [];
     } finally {
+      event.sender.removeListener('destroyed', onDestroyed); // avoid piling up listeners per request
       if (branchRequests.get(senderId) === controller) branchRequests.delete(senderId);
     }
   });

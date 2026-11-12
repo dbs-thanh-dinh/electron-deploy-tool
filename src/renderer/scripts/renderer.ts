@@ -111,6 +111,7 @@ function isConfigError(config: ConfigI | ConfigErrorI): config is ConfigErrorI {
 }
 let activeDeployments: string[] = [];
 let allBranches: string[] = []; // Store all branches for filtering
+let branchRequestSeq = 0; // Identifies the latest branch load; older results are dropped
 let isDeploying = false; // A deploy started from this window is in progress
 let pendingConfigRefresh = false; // Config changed elsewhere while deploying
 
@@ -158,6 +159,12 @@ async function refreshDeployConfig() {
 }
 
 function resetDeployDependents() {
+  // Drop any in-flight branch load: invalidate its result, hide the spinner, abort the git fetch
+  branchRequestSeq++;
+  const branchLoading = document.getElementById("branchLoading") as HTMLDivElement;
+  branchLoading.style.display = "none";
+  window.api.cancelGetBranches();
+
   const branchFilter = document.getElementById("branchFilter") as HTMLInputElement;
   const branchSelect = document.getElementById("branchSelect") as HTMLSelectElement;
   const envSelect = document.getElementById("envSelect") as HTMLSelectElement;
@@ -280,23 +287,21 @@ function setupDeployEventListeners() {
   const cancelBranchesBtn = document.getElementById("cancelBranchesBtn") as HTMLButtonElement;
 
   cancelBranchesBtn.addEventListener("click", () => {
-    window.api.cancelGetBranches();
-    // Back to "no project selected": the aborted request's result is ignored by the stale check
+    // Back to "no project selected"; resetDeployDependents aborts the request and drops its result
     projectSelect.value = "";
-    branchLoading.style.display = "none";
     resetDeployDependents();
   });
 
   projectSelect.addEventListener("change", async () => {
     const projectName = projectSelect.value;
     if (!projectName) {
-      branchLoading.style.display = "none";
       resetDeployDependents();
       return;
     }
 
     // Clear and disable dependent selects
-    branchLoading.style.display = "none"; // hide a spinner left by the previous project's request
+    const requestSeq = ++branchRequestSeq; // invalidates the previous project's load
+    branchLoading.style.display = "none";
     branchSelect.disabled = true;
     envSelect.disabled = true;
     typeSelect.disabled = true;
@@ -314,8 +319,8 @@ function setupDeployEventListeners() {
 
     branchLoading.style.display = "flex";
     const branches = await window.api.getBranches(project.repoPath);
-    // Ignore stale result if the user picked another project (or cancelled) while loading
-    if (projectSelect.value !== projectName) return;
+    // Ignore stale result if the user picked another project (even A -> B -> A) or cancelled while loading
+    if (requestSeq !== branchRequestSeq) return;
     branchLoading.style.display = "none";
     allBranches = branches; // Store for filtering
 
@@ -422,7 +427,8 @@ function appendDeployLogLine(line: string) {
   logOutput.textContent += (logOutput.textContent ? "\n" : "") + line;
   logOutput.scrollTop = logOutput.scrollHeight;
   // The overlay covers the log pane, so also show the latest line there
-  if (loadingText) loadingText.textContent = line.replace(/^\[[^\]]*\]\s*/, "");
+  const message = line.replace(/^\[[^\]]*\]\s*/, "").trim();
+  if (loadingText && message) loadingText.textContent = message;
 }
 
 function clearLogOutput() {
