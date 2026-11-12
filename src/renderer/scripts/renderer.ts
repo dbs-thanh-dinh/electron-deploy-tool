@@ -606,15 +606,16 @@ async function saveProject() {
     smartAppend: smartAppendCheck,
   };
 
+  if (projectsConfig.projects.some((p: any, i: number) => p.name === name && i !== editingProjectIndex)) {
+    alert(`Project with name "${name}" already exists`);
+    return;
+  }
+
   if (editingProjectIndex !== null) {
     // Edit existing
     projectsConfig.projects[editingProjectIndex] = project;
   } else {
     // Add new
-    if (projectsConfig.projects.some((p: any) => p.name === name)) {
-      alert(`Project with name "${name}" already exists`);
-      return;
-    }
     projectsConfig.projects.push(project);
   }
 
