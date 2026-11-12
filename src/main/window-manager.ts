@@ -42,6 +42,14 @@ export class WindowManager {
     return win;
   }
 
+  broadcastUpdateAvailable(payload: unknown): void {
+    this.windows.forEach(win => {
+      if (!win.isDestroyed()) {
+        win.webContents.send('update-available', payload);
+      }
+    });
+  }
+
   getAllWindows(): BrowserWindow[] {
     return Array.from(this.windows);
   }
