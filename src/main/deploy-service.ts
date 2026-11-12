@@ -205,6 +205,7 @@ export class DeployService {
       throw new Error(`${project.cicdFileName} does not exist in repo`);
     }
     const content = fs.readFileSync(cicdPath, 'utf8');
+    const eol = content.includes('\r\n') ? '\r\n' : '\n';
     const lines = content.split(/\r?\n/);
 
     const updateCommitMsg = (lines: string[], index: number, commitMsg: string) => {
@@ -233,7 +234,7 @@ export class DeployService {
       } else {
         updateCommitMsg(lines, lines.length - 1, commitMsg);
       }
-      fs.writeFileSync(cicdPath, lines.join('\n'));
+      fs.writeFileSync(cicdPath, lines.join(eol));
     }
   }
 
