@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Notification } from 'electron';
 import { WindowManager } from './window-manager';
 import { registerIpcHandlers } from './ipc-handlers';
 import path from 'node:path';

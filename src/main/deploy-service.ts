@@ -5,7 +5,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import { ProjectI } from './interface';
 import { pruneOldLogs } from './log-utils';
-import { applyCicdEntry, getCommitMsg, getFileContent, getGitErrorMessage, getLocalDate, getLocalTimestamp } from './deploy-utils';
+import { applyCicdEntry, resolveCicdFile, getCommitMsg, getFileContent, getGitErrorMessage, getLocalDate, getLocalTimestamp } from './deploy-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -162,14 +162,13 @@ export class DeployService {
       if (!branch || branch.startsWith('-')) {
         throw new Error(`Invalid branch name: ${branch}`);
       }
-      const cicdPath = path.resolve(repoPath, project.cicdFileName);
-      const relativeCicd = path.relative(path.resolve(repoPath), cicdPath);
-      if (!relativeCicd || relativeCicd.startsWith('..') || path.isAbsolute(relativeCicd)) {
+      const cicdFile = resolveCicdFile(repoPath, project.cicdFileName);
+      if (!cicdFile) {
         throw new Error(`Invalid CICD file name: ${project.cicdFileName}`);
       }
 
       // Same pathspec (forward slashes) for add / diff / checkout
-      cicdPathspec = relativeCicd.split(path.sep).join('/');
+      cicdPathspec = cicdFile.pathspec;
 
       // Git operations
       const stashBefore = await this.getTopStash(repoPath);
@@ -246,7 +245,11 @@ export class DeployService {
   }
 
   updateCICDFile(logs: string[], project: ProjectI, commitMsg: string) {
-    const cicdPath = path.join(project.repoPath, project.cicdFileName);
+    // Same resolution as the validation in deploy()
+    const cicdPath = resolveCicdFile(project.repoPath, project.cicdFileName)?.absolutePath;
+    if (!cicdPath) {
+      throw new Error(`Invalid CICD file name: ${project.cicdFileName}`);
+    }
     if (!fs.existsSync(cicdPath)) {
       throw new Error(`${project.cicdFileName} does not exist in repo`);
     }

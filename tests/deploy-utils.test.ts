@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import path from 'node:path';
 import {
   applyCicdEntry,
+  resolveCicdFile,
   getCommitMsg,
   getFileContent,
   getGitErrorMessage,
@@ -116,4 +118,43 @@ describe('getGitErrorMessage', () => {
     expect(getGitErrorMessage('plain string')).toBeUndefined();
     expect(getGitErrorMessage(null)).toBeUndefined();
   });
+});
+
+describe('resolveCicdFile', () => {
+  const repo = path.resolve('some', 'repo');
+
+  it('resolves a plain name and a nested path to a forward-slash pathspec', () => {
+    expect(resolveCicdFile(repo, 'CICD.txt')).toEqual({ absolutePath: path.join(repo, 'CICD.txt'), pathspec: 'CICD.txt' });
+    expect(resolveCicdFile(repo, 'ci/deploy/CICD.txt')?.pathspec).toBe('ci/deploy/CICD.txt');
+  });
+
+  it('accepts names that merely start with two dots', () => {
+    expect(resolveCicdFile(repo, '..cicd.txt')?.pathspec).toBe('..cicd.txt');
+    expect(resolveCicdFile(repo, 'ci/..cicd.txt')?.pathspec).toBe('ci/..cicd.txt');
+  });
+
+  it('accepts an absolute name inside the repo and rejects one in another directory', () => {
+    expect(resolveCicdFile(repo, path.join(repo, 'CICD.txt'))?.pathspec).toBe('CICD.txt');
+    expect(resolveCicdFile(repo, path.resolve('other', 'CICD.txt'))).toBeNull();
+  });
+
+  it('rejects names ending in a dot or space on Windows only (Win32 strips them, git would not match)', () => {
+    for (const name of ['CICD.txt.', 'CICD.txt ', 'ci/CICD.txt.', 'ci./CICD.txt']) {
+      expect(resolveCicdFile(repo, name, 'win32')).toBeNull();
+    }
+    expect(resolveCicdFile(repo, 'CICD.txt', 'win32')?.pathspec).toBe('CICD.txt');
+    expect(resolveCicdFile(repo, '..cicd.txt', 'win32')?.pathspec).toBe('..cicd.txt');
+    expect(resolveCicdFile(repo, 'CICD.txt.', 'linux')?.pathspec).toBe('CICD.txt.');
+  });
+
+  it('accepts a path that goes up and comes back into the repo', () => {
+    expect(resolveCicdFile(repo, 'ci/../CICD.txt')?.pathspec).toBe('CICD.txt');
+  });
+
+  it.each(['', '.', '..', '../CICD.txt', '../../x', 'ci/../../x', path.resolve('elsewhere', 'CICD.txt')])(
+    'rejects %j (empty, the repo itself, or outside the repo)',
+    (name) => {
+      expect(resolveCicdFile(repo, name)).toBeNull();
+    },
+  );
 });

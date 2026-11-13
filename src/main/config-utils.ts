@@ -6,6 +6,9 @@ import { ProjectI } from './interface';
 
 /** Fills defaults for fields missing in a (possibly hand-edited) project. Mutates and returns it. */
 export function applyProjectDefaults(project: ProjectI): ProjectI {
+  // A hand-edited project may lack these; the renderer calls .join/.map on them
+  if (!Array.isArray(project.envs)) project.envs = [];
+  if (!Array.isArray(project.deployTypes)) project.deployTypes = [];
   if (!project.branchFilter) project.branchFilter = '';
   if (!project.commitFormat) project.commitFormat = 'v1';
   if (!project.commitTemplate) project.commitTemplate = 'deploy: {env}, {type}';
