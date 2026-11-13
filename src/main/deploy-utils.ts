@@ -1,4 +1,19 @@
 // Pure helpers for DeployService. Must not import electron so they stay unit-testable.
+import path from 'node:path';
+
+/**
+ * Resolves the CICD file inside the repo. Returns its absolute path and a forward-slash pathspec
+ * relative to the repo, or null when the name is empty, absolute, or escapes the repo
+ * (a file merely named like "..cicd.txt" is fine; only a real ".." path segment escapes).
+ */
+export function resolveCicdFile(repoPath: string, cicdFileName: string): { absolutePath: string; pathspec: string } | null {
+  const absolutePath = path.resolve(repoPath, cicdFileName);
+  const relative = path.relative(path.resolve(repoPath), absolutePath);
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return null;
+  }
+  return { absolutePath, pathspec: relative.split(path.sep).join('/') };
+}
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');

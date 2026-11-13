@@ -193,6 +193,21 @@ describe('DeployService.deploy', () => {
     expect(joined(result.logs)).not.toContain('NOT restored');
   });
 
+  it('accepts a CICD file whose name starts with two dots, and rejects one outside the repo', async () => {
+    fs.writeFileSync(path.join(workDir, '..cicd.txt'), 'deploy: init\n');
+    git(workDir, 'add', '--', '..cicd.txt');
+    git(workDir, 'commit', '-m', 'dotted name');
+    git(workDir, 'push');
+
+    const ok = await service.deploy(makeOptions({ dryRun: true }, { cicdFileName: '..cicd.txt' }));
+    const outside = await service.deploy(makeOptions({ dryRun: true }, { cicdFileName: '../escape.txt' }));
+
+    expect(ok.success).toBe(true);
+    expect(fs.readFileSync(path.join(workDir, '..cicd.txt'), 'utf8')).toBe('deploy: init\ndeploy: dev, api\n');
+    expect(outside.success).toBe(false);
+    expect(outside.error).toContain('Invalid CICD file name');
+  });
+
   it('checks out another branch before deploying', async () => {
     git(workDir, 'branch', 'release');
     git(workDir, 'push', '-u', 'origin', 'release'); // -u: pull needs an upstream

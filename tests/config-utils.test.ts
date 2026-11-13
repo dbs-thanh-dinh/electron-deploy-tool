@@ -45,6 +45,19 @@ describe('applyProjectDefaults', () => {
     expect(project.fileContentTemplate).toBe('release {env}');
   });
 
+  it('turns a missing or non-array envs/deployTypes into an empty array, keeps real arrays', () => {
+    const missing = applyProjectDefaults({ name: 'p' } as ProjectI);
+    const wrong = applyProjectDefaults({ name: 'p', envs: 'dev', deployTypes: null } as unknown as ProjectI);
+    const ok = applyProjectDefaults({ name: 'p', envs: ['dev'], deployTypes: ['api'] } as ProjectI);
+
+    expect(missing.envs).toEqual([]);
+    expect(missing.deployTypes).toEqual([]);
+    expect(wrong.envs).toEqual([]);
+    expect(wrong.deployTypes).toEqual([]);
+    expect(ok.envs).toEqual(['dev']);
+    expect(ok.deployTypes).toEqual(['api']);
+  });
+
   it('keeps existing values, including smartAppend true, and extra fields', () => {
     const input = { commitTemplate: 'x', smartAppend: true, cicdFileName: 'ci.txt', commitPrefix: 'p' } as unknown as ProjectI;
 
