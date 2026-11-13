@@ -26,6 +26,15 @@ Hướng dẫn cho AI coding agent làm việc trong repo này. Giao tiếp vớ
 
 Ghi tài liệu giúp minh bạch quá trình phát triển, review lại quyết định về sau, giúp thành viên mới hiểu lý do đằng sau mỗi quyết định, và tạo lịch sử kiểm toán (audit trail) hoàn chỉnh.
 
+### Unit test bắt buộc cho mọi thay đổi logic
+
+- **Mọi chỉnh sửa logic** (thêm, sửa hoặc xoá hành vi; sửa lỗi; đổi điều kiện, thứ tự hay xử lý lỗi) **phải có unit test bao phủ trước khi coi là xong và trước khi tạo PR**. Mục tiêu là hạn chế tối đa lỗi hồi quy.
+- **Sửa lỗi:** viết test tái hiện lỗi (fail trên code cũ) rồi mới sửa; test phải pass sau khi sửa.
+- **Thêm/đổi hành vi:** test phải bao phủ đường chính, các trường hợp biên (rỗng, sai kiểu, tên đặc biệt, lỗi từ git/hệ thống) và đường lỗi/rollback. Khi đổi hành vi đã có thì cập nhật test cũ cho khớp, không xoá test để cho pass.
+- **Đặt logic ở nơi test được:** ưu tiên hàm thuần không import `electron` (như `deploy-utils.ts`, `config-utils.ts`, `branch-utils.ts`, `log-utils.ts`); luồng cần git thì dùng git thật trong thư mục tạm (như `tests/deploy-service.test.ts`). Logic mới trong `ipc-handlers.ts`/renderer nên tách thành hàm thuần rồi test, thay vì để lẫn với Electron/DOM.
+- **Ngoại lệ phải nói rõ:** phần chỉ là giao diện/DOM hoặc cấu hình không test tự động được thì ghi rõ trong báo cáo và note lý do, kèm cách kiểm tra tay đã làm. Không bỏ qua âm thầm.
+- Thay đổi không đổi logic (sửa typo, comment, định dạng, tài liệu, bump version) không bắt buộc thêm test.
+
 ## Tổng quan
 
 **Deploy Tool** (`deploy-tool`, v1.3.0) là ứng dụng desktop Electron + TypeScript (chỉ Windows) tự động hoá quy trình deploy qua Git: với mỗi project đã cấu hình, tool sẽ `git stash` → `git checkout <branch>` → `git pull` → ghi một dòng vào file CI/CD (mặc định `CICD.txt`) → `git add` → `git commit` → `git push` (hoặc bỏ qua push ở chế độ dry-run). Push lên nhánh sẽ kích hoạt pipeline CI/CD của repo đích.
@@ -135,5 +144,5 @@ Theo quy ước global của chủ dự án (ThanhDC):
 
 - Nhánh chính `main`; không push trực tiếp lên `main`/`master` — làm trên nhánh `feature/*`, `release/*` rồi tạo PR.
 - Commit theo Conventional Commits (`feat:`, `fix:`, `chore:`…). **Không** thêm `Co-Authored-By` hay trailer ghi công AI/“Generated with…” vào commit message và mô tả PR.
-- Trước khi tạo PR: chạy `npm run typecheck`, `npm test` và `npm run lint` (`npx tsc --noEmit` một mình không kiểm tra `tests/`).
+- Trước khi tạo PR: chạy `npm run typecheck`, `npm test` và `npm run lint` (`npx tsc --noEmit` một mình không kiểm tra `tests/`), và đảm bảo mọi thay đổi logic đã có unit test bao phủ (xem mục "Unit test bắt buộc cho mọi thay đổi logic").
 - Release: bump `version` trong `package.json` (commit `chore: bump version to x.y.z`), build bằng `npm run dist`, publish lên GitHub Releases (`dbs-thanhdc/electron-deploy-tool`) để `electron-updater` phát hiện.
