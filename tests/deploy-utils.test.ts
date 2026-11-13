@@ -133,6 +133,20 @@ describe('resolveCicdFile', () => {
     expect(resolveCicdFile(repo, 'ci/..cicd.txt')?.pathspec).toBe('ci/..cicd.txt');
   });
 
+  it('accepts an absolute name inside the repo and rejects one in another directory', () => {
+    expect(resolveCicdFile(repo, path.join(repo, 'CICD.txt'))?.pathspec).toBe('CICD.txt');
+    expect(resolveCicdFile(repo, path.resolve('other', 'CICD.txt'))).toBeNull();
+  });
+
+  it('rejects names ending in a dot or space on Windows only (Win32 strips them, git would not match)', () => {
+    for (const name of ['CICD.txt.', 'CICD.txt ', 'ci/CICD.txt.', 'ci./CICD.txt']) {
+      expect(resolveCicdFile(repo, name, 'win32')).toBeNull();
+    }
+    expect(resolveCicdFile(repo, 'CICD.txt', 'win32')?.pathspec).toBe('CICD.txt');
+    expect(resolveCicdFile(repo, '..cicd.txt', 'win32')?.pathspec).toBe('..cicd.txt');
+    expect(resolveCicdFile(repo, 'CICD.txt.', 'linux')?.pathspec).toBe('CICD.txt.');
+  });
+
   it('accepts a path that goes up and comes back into the repo', () => {
     expect(resolveCicdFile(repo, 'ci/../CICD.txt')?.pathspec).toBe('CICD.txt');
   });

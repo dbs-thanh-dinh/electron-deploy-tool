@@ -3,13 +3,22 @@ import path from 'node:path';
 
 /**
  * Resolves the CICD file inside the repo. Returns its absolute path and a forward-slash pathspec
- * relative to the repo, or null when the name is empty, absolute, or escapes the repo
- * (a file merely named like "..cicd.txt" is fine; only a real ".." path segment escapes).
+ * relative to the repo, or null when the name is empty, points at the repo itself, or ends up
+ * outside the repo (an absolute name INSIDE the repo is accepted). A file merely named like
+ * "..cicd.txt" is fine; only a real ".." path segment escapes. On Windows, segments ending in a dot
+ * or space are rejected: Win32 strips them when touching the file, so git's pathspec would not match.
  */
-export function resolveCicdFile(repoPath: string, cicdFileName: string): { absolutePath: string; pathspec: string } | null {
+export function resolveCicdFile(
+  repoPath: string,
+  cicdFileName: string,
+  platform: NodeJS.Platform = process.platform,
+): { absolutePath: string; pathspec: string } | null {
   const absolutePath = path.resolve(repoPath, cicdFileName);
   const relative = path.relative(path.resolve(repoPath), absolutePath);
   if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return null;
+  }
+  if (platform === 'win32' && relative.split(path.sep).some((segment) => /[. ]$/.test(segment))) {
     return null;
   }
   return { absolutePath, pathspec: relative.split(path.sep).join('/') };

@@ -246,7 +246,10 @@ export class DeployService {
 
   updateCICDFile(logs: string[], project: ProjectI, commitMsg: string) {
     // Same resolution as the validation in deploy()
-    const cicdPath = path.resolve(project.repoPath, project.cicdFileName);
+    const cicdPath = resolveCicdFile(project.repoPath, project.cicdFileName)?.absolutePath;
+    if (!cicdPath) {
+      throw new Error(`Invalid CICD file name: ${project.cicdFileName}`);
+    }
     if (!fs.existsSync(cicdPath)) {
       throw new Error(`${project.cicdFileName} does not exist in repo`);
     }
