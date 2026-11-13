@@ -164,6 +164,7 @@ function resetDeployDependents() {
   const branchLoading = document.getElementById("branchLoading") as HTMLDivElement;
   branchLoading.style.display = "none";
   (document.getElementById("branchError") as HTMLDivElement).style.display = "none";
+  (document.getElementById("projectOptionsWarning") as HTMLDivElement).style.display = "none";
   window.api.cancelGetBranches();
 
   const branchFilter = document.getElementById("branchFilter") as HTMLInputElement;
@@ -222,6 +223,17 @@ function populateProjectOptions(project: ProjectI, preserveSelection = false) {
   commitTemplate.disabled = false;
   fileContentTemplate.value = project.fileContentTemplate;
   fileContentTemplate.disabled = false;
+
+  // A hand-edited project can have no environments/types; say why Deploy stays disabled
+  const missing = [
+    project.envs.length === 0 ? "environments" : "",
+    project.deployTypes.length === 0 ? "deploy types" : "",
+  ].filter(Boolean);
+  const optionsWarning = document.getElementById("projectOptionsWarning") as HTMLDivElement;
+  optionsWarning.textContent = missing.length
+    ? `Project "${project.name}" has no ${missing.join(" or ")} configured. Edit it on the Projects page to enable deploying.`
+    : "";
+  optionsWarning.style.display = missing.length ? "block" : "none";
 
   updateDeployButtonState();
 }
@@ -304,6 +316,7 @@ function setupDeployEventListeners() {
     const requestSeq = ++branchRequestSeq; // invalidates the previous project's load
     branchLoading.style.display = "none";
     (document.getElementById("branchError") as HTMLDivElement).style.display = "none";
+    (document.getElementById("projectOptionsWarning") as HTMLDivElement).style.display = "none";
     branchSelect.disabled = true;
     envSelect.disabled = true;
     typeSelect.disabled = true;
