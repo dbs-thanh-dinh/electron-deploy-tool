@@ -37,7 +37,7 @@ Tính năng chính: nhiều cửa sổ (chặn deploy trùng project), quản l�
 - Electron `^28`, TypeScript `^5.3` (strict, target ES2020, module `commonjs`)
 - `electron-updater` (GitHub provider), `electron-builder` (đóng gói MSI + NSIS, x64)
 - Renderer là HTML/CSS + TypeScript thuần (không framework, không bundler)
-- Test: Vitest (`tests/`); lint: ESLint flat config (`eslint.config.mjs`, typescript-eslint). Không cấu hình Prettier/formatter
+- Test: Vitest (`tests/`; `tests/renderer.test.ts` nạp `index.html` + `renderer.ts` thật vào jsdom, mọi thay đổi renderer phải kèm test ở đó); lint: ESLint flat config (`eslint.config.mjs`, typescript-eslint). Không cấu hình Prettier/formatter
 
 ## Lệnh thường dùng
 

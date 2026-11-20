@@ -20,10 +20,10 @@
   --accent-primary: #0066cc;
   --accent-hover: #0052a3;
   
-  --success: #28a745;
-  --danger: #dc3545;
-  --warning: #ffc107;
-  --info: #17a2b8;
+  --success: #1e7e34;
+  --danger: #c82333;
+  --warning: #b45309; /* darker amber: #ffc107 is unreadable on white (contrast ~1.6:1) */
+  --info: #117a8b;
 }
 
 /* Dark Theme */
