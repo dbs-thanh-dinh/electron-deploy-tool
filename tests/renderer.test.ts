@@ -69,6 +69,7 @@ interface HooksI {
   isProjectDeploying(name: string): boolean;
   setActiveDeployments(value: string[]): void;
   getPendingConfigRefresh(): boolean;
+  getPendingDeployConfigRefresh(): boolean;
   appendDeployLogLine(line: string): void;
   setupDeployEventListeners(): void;
   selectLogFile(filename: string): Promise<void>;
@@ -99,6 +100,7 @@ const HOOKS_SOURCE = `
   PROTECTED_BRANCH_RE,
   setActiveDeployments(v) { activeDeployments = v; },
   getPendingConfigRefresh() { return pendingConfigRefresh; },
+  getPendingDeployConfigRefresh() { return pendingDeployConfigRefresh; },
   setProjectsConfig(c) { projectsConfig = c; },
   getProjectsConfig() { return projectsConfig; },
   setCurrentConfig(c) { currentConfig = c; },
@@ -783,6 +785,8 @@ describe('runDeploy', () => {
     await env.hooks.runDeploy();
     expect(env.api.showNotification).toHaveBeenCalledTimes(1);
     expect(env.api.showNotification.mock.calls[0][0]).toBe('Deploy Cancelled');
+    // Not every cancel rolls anything back (e.g. before the CICD file was written), so no claim about the file
+    expect(env.api.showNotification.mock.calls[0][1]).toBe('P deploy was cancelled');
     expect(logClasses(env, 'deployLog')).toEqual(['log-line log-warn']);
   });
 
@@ -796,6 +800,8 @@ describe('runDeploy', () => {
     env.api.cancelDeploy.mockResolvedValue(false);
     env.hooks.setupDeployEventListeners();
     await env.hooks.runDeploy();
+    expect(env.api.cancelDeploy).toHaveBeenCalledTimes(1); // the click really happened mid-deploy
+    expect(env.api.showNotification).toHaveBeenCalledTimes(1);
     expect(env.api.showNotification).toHaveBeenCalledWith('Deploy Completed', 'P deployed successfully to dev');
   });
 
@@ -814,6 +820,29 @@ describe('runDeploy', () => {
     await env.hooks.runDeploy();
     expect(during).toEqual(['pending', 'pending', 'pending', 'pending', 'pending', 'pending']);
     expect(byId(env, 'deployProgress').style.display).toBe('block');
+  });
+
+  it('moves a step left "running" to failed when startDeploy throws, and to cancelled when the result is cancelled', async () => {
+    const env = await createEnv();
+    setupDeployForm(env, 'develop');
+    env.hooks.setIsDeploying(true);
+    const stepStatuses = () =>
+      Array.from(env.document.querySelectorAll<HTMLElement>('.deploy-step')).map((el) => `${el.dataset.step}:${el.dataset.status}`);
+
+    env.api.startDeploy.mockImplementation(async () => {
+      env.hooks.applyDeployStep({ step: 'stash', status: 'done' });
+      env.hooks.applyDeployStep({ step: 'pull', status: 'running' });
+      throw new Error('ipc down');
+    });
+    await env.hooks.runDeploy();
+    expect(stepStatuses()).toEqual(['stash:done', 'checkout:pending', 'pull:failed', 'write:pending', 'commit:pending', 'push:pending']);
+
+    env.api.startDeploy.mockImplementation(async () => {
+      env.hooks.applyDeployStep({ step: 'pull', status: 'running' });
+      return { success: false, cancelled: true, error: 'Deploy cancelled by user', logs: [] };
+    });
+    await env.hooks.runDeploy();
+    expect(stepStatuses()[2]).toBe('pull:cancelled');
   });
 
   it('notifies with the error when the deploy fails', async () => {
@@ -1023,7 +1052,58 @@ describe('projects being deployed are locked', () => {
     const done = env.hooks.deleteProject(1);
     byId<HTMLButtonElement>(env, 'confirmModalOk').click();
     await done;
+    expect(env.hooks.getPendingDeployConfigRefresh()).toBe(true);
+    expect(env.hooks.getPendingConfigRefresh()).toBe(false); // that one is for changes made in OTHER windows
+  });
+
+  it('after the deploy only the Deploy page is refreshed: an Edit form opened meanwhile stays open', async () => {
+    const env = await createEnv();
+    env.api.loadConfig.mockResolvedValue(mkConfig('A', 'B', 'C'));
+    await env.init();
+    env.hooks.setProjectsConfig(mkConfig('A', 'B', 'C'));
+    setupDeployForm(env, 'develop');
+    let release!: () => void;
+    env.api.startDeploy.mockImplementation(() => new Promise((resolve) => (release = () => resolve({ success: true, logs: [] }))));
+    const deploying = env.hooks.handleDeploy();
+    await flush();
+
+    // while deploying: save a change (deleting B), then start editing C and type something
+    const del = env.hooks.deleteProject(1);
+    byId<HTMLButtonElement>(env, 'confirmModalOk').click();
+    await del;
+    env.hooks.editProject(env.hooks.getProjectsConfig()!.projects.findIndex((p) => p.name === 'C'));
+    byId<HTMLInputElement>(env, 'envs').value = 'half-typed';
+    env.api.loadConfig.mockClear();
+
+    release();
+    await deploying;
+    await flush();
+
+    expect(env.api.loadConfig).toHaveBeenCalledTimes(1); // Deploy page refreshed with the saved config
+    expect(byId(env, 'projectFormContainer').style.display).toBe('block');
+    expect(byId<HTMLInputElement>(env, 'envs').value).toBe('half-typed');
+    expect(env.hooks.getPendingDeployConfigRefresh()).toBe(false);
+  });
+
+  it('a change made in another window while deploying still refreshes everything afterwards', async () => {
+    const env = await createEnv();
+    env.api.loadConfig.mockResolvedValue(mkConfig('A', 'B'));
+    await env.init();
+    const onConfigUpdated = env.api.onConfigUpdated.mock.calls[0][0] as () => void;
+    env.hooks.setProjectsConfig(mkConfig('A', 'B'));
+    setupDeployForm(env, 'develop');
+    let release!: () => void;
+    env.api.startDeploy.mockImplementation(() => new Promise((resolve) => (release = () => resolve({ success: true, logs: [] }))));
+    const deploying = env.hooks.handleDeploy();
+    await flush();
+    onConfigUpdated();
     expect(env.hooks.getPendingConfigRefresh()).toBe(true);
+    env.hooks.editProject(0); // form open
+    release();
+    await deploying;
+    await flush();
+    expect(env.hooks.getPendingConfigRefresh()).toBe(false);
+    expect(byId(env, 'projectFormContainer').style.display).toBe('none'); // old behaviour: indexes may have changed
   });
 
   it('does not schedule a refresh when saving while idle', async () => {

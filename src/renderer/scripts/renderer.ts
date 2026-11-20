@@ -115,6 +115,7 @@ let allBranches: string[] = []; // Store all branches for filtering
 let branchRequestSeq = 0; // Identifies the latest branch load; older results are dropped
 let isDeploying = false; // A deploy started from this window is in progress
 let pendingConfigRefresh = false; // Config changed elsewhere while deploying
+let pendingDeployConfigRefresh = false; // This window saved the config while deploying: only the Deploy page needs a refresh
 
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
@@ -283,6 +284,7 @@ async function refreshConfigFromOtherWindow() {
     return;
   }
   pendingConfigRefresh = false;
+  pendingDeployConfigRefresh = false;
 
   await refreshDeployConfig();
   await loadProjectsConfig();
@@ -692,6 +694,10 @@ async function handleDeploy() {
     updateDeployButtonState();
     if (pendingConfigRefresh) {
       refreshConfigFromOtherWindow();
+    } else if (pendingDeployConfigRefresh) {
+      // Not refreshConfigFromOtherWindow: that closes an open Edit form and would discard what the user is typing
+      pendingDeployConfigRefresh = false;
+      refreshDeployConfig();
     }
   }
 }
@@ -738,6 +744,7 @@ async function runDeploy() {
   setFormEnabled(false);
   resetDeployProgress();
   clearLogContainer(logOutput);
+  let cancelled = false;
 
   try {
     const result = await window.api.startDeploy({
@@ -759,7 +766,8 @@ async function runDeploy() {
     if (result.success) {
       window.api.showNotification("Deploy Completed", `${projectName} deployed successfully to ${env}`);
     } else if (result.cancelled) {
-      window.api.showNotification("Deploy Cancelled", `${projectName} deploy was cancelled; the CICD file was restored`);
+      cancelled = true;
+      window.api.showNotification("Deploy Cancelled", `${projectName} deploy was cancelled`);
     } else {
       window.api.showNotification("Deploy Failed", result.error || "Unknown error occurred");
     }
@@ -768,6 +776,10 @@ async function runDeploy() {
     appendLogLine(logOutput, `Error: ${message}`, true);
     window.api.showNotification("Deploy Error", message);
   } finally {
+    // A step still "running" here (startDeploy threw, or its final event was lost) must not spin forever
+    getStepElements()
+      .filter((el) => el.dataset.status === "running")
+      .forEach((el) => (el.dataset.status = cancelled ? "cancelled" : "failed"));
     hideCancelButton();
     setFormEnabled(true);
   }
@@ -1160,7 +1172,7 @@ async function saveProjectsConfig(): Promise<boolean> {
       return false;
     }
     // Saving does not notify this window; the Deploy page keeps its old config until the running deploy ends
-    if (isDeploying) pendingConfigRefresh = true;
+    if (isDeploying) pendingDeployConfigRefresh = true;
     return true;
   } catch (err: unknown) {
     showToast(`Error saving config: ${(err as Error).message}`, "error");

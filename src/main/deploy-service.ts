@@ -41,9 +41,13 @@ export interface DeployHooks {
 
 /** Kills a process and all of its children. A plain child.kill() on Windows leaves git's sub-processes running. */
 function killProcessTree(child: ChildProcess): void {
-  if (!child.pid) return;
+  // Already exited: its PID may have been reused by an unrelated process
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
   if (process.platform === 'win32') {
-    execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => undefined);
+    // If taskkill itself fails, still kill the git process so the deploy cannot hang until the git timeout
+    execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, (err) => {
+      if (err) child.kill();
+    });
   } else {
     child.kill('SIGKILL');
   }

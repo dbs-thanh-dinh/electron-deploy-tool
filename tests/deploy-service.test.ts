@@ -423,6 +423,45 @@ describe('DeployService.deploy steps and cancellation', () => {
     });
   });
 
+  describe('cancel while a git command that must not be killed is running', () => {
+    it('lets the stash finish and stops at the next boundary (checkout)', async () => {
+      const controller = new AbortController();
+      const events: string[] = [];
+      const result = await service.deploy(makeOptions(), undefined, {
+        signal: controller.signal,
+        onStep: (e) => {
+          events.push(`${e.step}:${e.status}`);
+          if (e.step === 'stash' && e.status === 'running') controller.abort();
+        },
+      });
+      expect(result.cancelled).toBe(true);
+      // stash was running when the abort came: it completes normally, the next boundary stops the deploy
+      expect(events).toEqual(['stash:running', 'stash:done', 'checkout:cancelled']);
+      expect(joined(result.logs)).toContain('git stash');
+      expect(joined(result.logs)).not.toContain('interrupted');
+      expect(readCicd()).toBe(INITIAL_CICD);
+    });
+  });
+
+  describe('cancel when the rollback itself fails', () => {
+    it('still reports the cancellation and tells the user to check the file', async () => {
+      const controller = new AbortController();
+      const result = await service.deploy(makeOptions(), undefined, {
+        signal: controller.signal,
+        onStep: (e) => {
+          if (e.step === 'write' && e.status === 'done') {
+            // A stale lock makes `git checkout HEAD -- <file>` (the rollback) fail
+            fs.writeFileSync(path.join(workDir, '.git', 'index.lock'), '');
+            controller.abort();
+          }
+        },
+      });
+      expect(result.cancelled).toBe(true);
+      expect(joined(result.logs)).toContain('Rollback failed');
+      expect(readCicd()).not.toBe(INITIAL_CICD); // the entry was written and could not be restored
+    });
+  });
+
   describe('cancel after the point of no return', () => {
     it('ignores an abort that arrives once the commit started: commit and push complete', async () => {
       const controller = new AbortController();
