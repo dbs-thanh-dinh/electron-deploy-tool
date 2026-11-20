@@ -330,8 +330,15 @@ input:checked + .toggle-slider:before {
   color: white;
 }
 
+/* Must restate the background: `.btn-small:hover` (same specificity, earlier) would otherwise win */
 .btn-danger:hover {
+  background-color: var(--danger);
   opacity: 0.9;
+}
+
+/* The dark-theme danger colour is light, so white text on it is hard to read */
+.dark-theme .btn-danger {
+  color: var(--bg-primary);
 }
 
 /* Log Container */

@@ -1131,6 +1131,30 @@ describe('theme colours', () => {
     expect(contrast(warning, variable(selector, '--bg-secondary'))).toBeGreaterThanOrEqual(4.5);
   });
 
+  const mainCss = fs.readFileSync(path.join(RENDERER_DIR, 'styles', 'main.css'), 'utf8');
+  const ruleBody = (selector: string) => {
+    const start = mainCss.indexOf(`\n${selector} {`);
+    expect(start, `${selector} rule exists`).toBeGreaterThanOrEqual(0);
+    return mainCss.slice(start, mainCss.indexOf('}', start));
+  };
+
+  it('.btn-danger text is readable on the danger background in both themes (WCAG AA)', () => {
+    // Light theme: the base rule uses white text; dark theme overrides it with the page background colour
+    expect(ruleBody('.btn-danger')).toMatch(/color:\s*white;/);
+    expect(contrast('#ffffff', variable('.light-theme', '--danger'))).toBeGreaterThanOrEqual(4.5);
+
+    expect(ruleBody('.dark-theme .btn-danger')).toMatch(/color:\s*var\(--bg-primary\)/);
+    expect(contrast(variable('.dark-theme', '--bg-primary'), variable('.dark-theme', '--danger'))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('.btn-danger keeps the danger background on hover, beating .btn-small:hover (same specificity, so it must come later)', () => {
+    // Delete buttons are `btn btn-small btn-danger`; without this the hover background becomes --bg-hover and
+    // the dark-theme text colour (--bg-primary) is nearly invisible on it. Limitation: this is a textual check of
+    // the stylesheet, jsdom cannot evaluate :hover or var().
+    expect(ruleBody('.btn-danger:hover')).toMatch(/background-color:\s*var\(--danger\)/);
+    expect(mainCss.indexOf('\n.btn-danger:hover {')).toBeGreaterThan(mainCss.indexOf('\n.btn-small:hover {'));
+  });
+
   // Every colour used for log text (.log-line.log-*) must be readable on the log background
   it.each(['.light-theme', '.dark-theme'])('%s: log text colours meet WCAG AA (4.5:1)', (selector) => {
     ['--danger', '--warning', '--success', '--info'].forEach((name) => {
