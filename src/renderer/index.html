@@ -126,6 +126,7 @@
             <button id="deployBtn" class="btn btn-primary" disabled>
               <span class="btn-text">Start Deploy</span>
             </button>
+            <span id="dryRunBadge" class="dry-run-badge" style="display: none;">DRY RUN - no push</span>
           </div>
         </div>
 
@@ -133,7 +134,10 @@
         <div class="log-container">
           <div class="log-header">
             <h3>Deploy Log</h3>
-            <button id="clearLogBtn" class="btn btn-small">Clear</button>
+            <div class="log-header-actions">
+              <button id="copyLogBtn" class="btn btn-small">Copy</button>
+              <button id="clearLogBtn" class="btn btn-small">Clear</button>
+            </div>
           </div>
           <div id="deployLog" class="log-output"></div>
         </div>
@@ -295,6 +299,21 @@
         </div>
       </div>
     </main>
+  </div>
+
+  <!-- Toasts -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <!-- Confirm Modal -->
+  <div id="confirmModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle" aria-describedby="confirmModalMessage">
+      <h3 id="confirmModalTitle"></h3>
+      <p id="confirmModalMessage"></p>
+      <div class="modal-actions">
+        <button id="confirmModalCancel" class="btn btn-small">Cancel</button>
+        <button id="confirmModalOk" class="btn btn-primary">OK</button>
+      </div>
+    </div>
   </div>
 
   <!-- Loading Spinner Overlay -->

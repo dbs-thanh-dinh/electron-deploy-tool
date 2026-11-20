@@ -1001,3 +1001,104 @@ input:checked + .toggle-slider:before {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--bg-hover);
 }
+/* ===== Log lines ===== */
+.log-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.log-line {
+  min-height: 1.6em;
+}
+
+.log-line.log-error { color: var(--danger); }
+.log-line.log-warn { color: var(--warning); }
+.log-line.log-success { color: var(--success); }
+.log-line.log-cmd { color: var(--info); }
+.log-line.log-info { color: var(--text-secondary); }
+.log-line.log-head { font-weight: 600; }
+
+.dry-run-badge {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--warning);
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning);
+}
+
+/* ===== Toasts ===== */
+.toast-container {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 420px;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--info);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px var(--shadow);
+  font-size: 13px;
+  word-break: break-word;
+}
+
+.toast.toast-error { border-left-color: var(--danger); }
+.toast.toast-warning { border-left-color: var(--warning); }
+.toast.toast-success { border-left-color: var(--success); }
+
+.toast-message { flex: 1; white-space: pre-wrap; }
+
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.toast-close:hover { color: var(--text-primary); }
+
+/* ===== Confirm modal ===== */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10001;
+}
+
+.modal-box {
+  width: min(440px, 90vw);
+  padding: 20px;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 20px var(--shadow);
+}
+
+.modal-box h3 { margin-bottom: 10px; font-size: 16px; }
+.modal-box p { margin-bottom: 18px; font-size: 14px; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; }
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}

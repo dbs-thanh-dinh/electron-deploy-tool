@@ -124,6 +124,157 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, "&#39;");
 }
 
+// ===== TOAST / CONFIRM MODAL =====
+type ToastType = "info" | "success" | "warning" | "error";
+
+function showToast(message: string, type: ToastType = "info") {
+  const container = document.getElementById("toastContainer") as HTMLDivElement;
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.setAttribute("role", type === "error" ? "alert" : "status");
+
+  const text = document.createElement("span");
+  text.className = "toast-message";
+  text.textContent = message;
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "toast-close";
+  closeBtn.setAttribute("aria-label", "Close");
+  closeBtn.textContent = "×";
+
+  const dismiss = () => toast.remove();
+  closeBtn.addEventListener("click", dismiss);
+  toast.append(text, closeBtn);
+  container.appendChild(toast);
+
+  // Errors stay longer so long messages can be read
+  setTimeout(dismiss, type === "error" ? 12000 : type === "warning" ? 8000 : 4000);
+}
+
+interface ConfirmModalOptionsI {
+  title: string;
+  message: string;
+  confirmText?: string;
+  danger?: boolean;
+}
+
+let resolvePendingConfirm: ((result: boolean) => void) | null = null;
+
+function showConfirmModal(options: ConfirmModalOptionsI): Promise<boolean> {
+  // A newer modal supersedes an older one: resolve the old one as cancelled
+  resolvePendingConfirm?.(false);
+
+  const modal = document.getElementById("confirmModal") as HTMLDivElement;
+  const okBtn = document.getElementById("confirmModalOk") as HTMLButtonElement;
+  const cancelBtn = document.getElementById("confirmModalCancel") as HTMLButtonElement;
+  (document.getElementById("confirmModalTitle") as HTMLElement).textContent = options.title;
+  (document.getElementById("confirmModalMessage") as HTMLElement).textContent = options.message;
+  okBtn.textContent = options.confirmText ?? "OK";
+  okBtn.className = `btn ${options.danger ? "btn-danger" : "btn-primary"}`;
+
+  const previousFocus = document.activeElement as HTMLElement | null;
+  modal.style.display = "flex";
+  cancelBtn.focus(); // safe default
+
+  return new Promise<boolean>((resolve) => {
+    const finish = (result: boolean) => {
+      modal.style.display = "none";
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+      document.removeEventListener("keydown", onKeydown, true);
+      resolvePendingConfirm = null;
+      previousFocus?.focus();
+      resolve(result);
+    };
+    const onOk = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKeydown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        finish(false);
+      } else if (e.key === "Tab") {
+        // Keep focus inside the dialog
+        e.preventDefault();
+        (document.activeElement === okBtn ? cancelBtn : okBtn).focus();
+      }
+    };
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
+    document.addEventListener("keydown", onKeydown, true);
+    resolvePendingConfirm = finish;
+  });
+}
+
+// ===== LOG RENDERING =====
+const LOG_TIMESTAMP_RE = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s?/;
+const logSources = new WeakMap<HTMLElement, string[]>(); // plain-text entries behind a log container
+
+function classifyLogEntry(entry: string): string {
+  const text = entry.replace(LOG_TIMESTAMP_RE, "").trim();
+  if (text.startsWith("❌") || /^(Error|fatal)\b/i.test(text)) return "log-error";
+  if (text.startsWith("⚠") || text.startsWith("↩")) return "log-warn";
+  if (text.startsWith("✅") || text.startsWith("✓")) return "log-success";
+  if (text.startsWith("$ ")) return "log-cmd";
+  if (text.startsWith("ℹ") || text.startsWith("DRY-RUN")) return "log-info";
+  if (text.startsWith("🚀") || text.startsWith("====")) return "log-head";
+  return "";
+}
+
+function createLogEntryElement(entry: string): HTMLDivElement {
+  const el = document.createElement("div");
+  el.className = `log-line ${classifyLogEntry(entry)}`.trim();
+  el.textContent = entry;
+  return el;
+}
+
+// Lines without a timestamp continue the previous entry (multi-line git output)
+function groupLogEntries(lines: string[]): string[] {
+  const entries: string[] = [];
+  for (const line of lines) {
+    if (entries.length > 0 && !LOG_TIMESTAMP_RE.test(line)) {
+      entries[entries.length - 1] += `\n${line}`;
+    } else {
+      entries.push(line);
+    }
+  }
+  return entries;
+}
+
+function renderLogLines(container: HTMLElement, lines: string[]) {
+  const entries = groupLogEntries(lines);
+  logSources.set(container, entries);
+  const fragment = document.createDocumentFragment();
+  entries.forEach((entry) => fragment.appendChild(createLogEntryElement(entry)));
+  container.replaceChildren(fragment);
+  container.scrollTop = container.scrollHeight;
+}
+
+// Append one entry; stays pinned to the bottom only if the user was already there
+function appendLogLine(container: HTMLElement, line: string, forceNewEntry = false) {
+  const entries = logSources.get(container) ?? [];
+  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+
+  if (!forceNewEntry && entries.length > 0 && !LOG_TIMESTAMP_RE.test(line)) {
+    entries[entries.length - 1] += `\n${line}`;
+    (container.lastElementChild as HTMLElement).textContent = entries[entries.length - 1];
+  } else {
+    entries.push(line);
+    container.appendChild(createLogEntryElement(line));
+  }
+  logSources.set(container, entries);
+  if (nearBottom) container.scrollTop = container.scrollHeight;
+}
+
+function clearLogContainer(container: HTMLElement) {
+  logSources.set(container, []);
+  container.replaceChildren();
+}
+
+function getLogText(container: HTMLElement): string {
+  return (logSources.get(container) ?? []).join("\n");
+}
+
+const PROTECTED_BRANCH_RE = /^(main|master|stage|staging|prod|production)$/i;
+
 async function refreshConfigFromOtherWindow() {
   if (isDeploying) {
     // Apply once the running deploy finishes so its log is not lost
@@ -260,14 +411,14 @@ async function loadDeployConfig() {
       // Alert only here: the projects page loads the same config and reports to the console
       currentConfig = null;
       console.error("Failed to load config:", config.error);
-      alert(`Failed to load configuration: ${config.error}`);
+      showToast(`Failed to load configuration: ${config.error}`, "error");
     } else {
       currentConfig = config;
     }
     populateProjectSelect();
   } catch (err) {
     console.error("Failed to load config:", err);
-    alert("Failed to load configuration");
+    showToast("Failed to load configuration", "error");
   }
 }
 
@@ -367,6 +518,29 @@ function setupDeployEventListeners() {
     clearLogOutput();
   });
 
+  const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
+  copyLogBtn.addEventListener("click", async () => {
+    const text = getLogText(document.getElementById("deployLog") as HTMLDivElement);
+    if (!text) {
+      showToast("Log is empty", "warning");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("Log copied to clipboard", "success");
+    } catch (err: unknown) {
+      showToast(`Failed to copy log: ${(err as Error).message}`, "error");
+    }
+  });
+
+  const dryRunCheck = document.getElementById("dryRunCheck") as HTMLInputElement;
+  const dryRunBadge = document.getElementById("dryRunBadge") as HTMLSpanElement;
+  const syncDryRunBadge = () => {
+    dryRunBadge.style.display = dryRunCheck.checked ? "inline-block" : "none";
+  };
+  dryRunCheck.addEventListener("change", syncDryRunBadge);
+  syncDryRunBadge();
+
 }
 
 function updateDeployButtonState() {
@@ -442,16 +616,14 @@ function appendDeployLogLine(line: string) {
   if (!isDeploying) return;
   const logOutput = document.getElementById("deployLog") as HTMLDivElement;
   const loadingText = document.getElementById("loadingText");
-  logOutput.textContent += (logOutput.textContent ? "\n" : "") + line;
-  logOutput.scrollTop = logOutput.scrollHeight;
+  appendLogLine(logOutput, line);
   // The overlay covers the log pane, so also show the latest line there
   const message = line.replace(/^\[[^\]]*\]\s*/, "").trim();
   if (loadingText && message) loadingText.textContent = message;
 }
 
 function clearLogOutput() {
-  const logOutput = document.getElementById("deployLog") as HTMLDivElement;
-  logOutput.textContent = "";
+  clearLogContainer(document.getElementById("deployLog") as HTMLDivElement);
 }
 
 async function handleDeploy() {
@@ -492,24 +664,27 @@ async function runDeploy() {
   // Check if can deploy
   const canDeploy = await window.api.canDeploy(projectName);
   if (!canDeploy) {
-    alert(`Project ${projectName} is already being deployed`);
+    showToast(`Project ${projectName} is already being deployed`, "warning");
     return;
   }
 
   const project = currentConfig!.projects.find((p) => p.name === projectName);
   if (!project) return;
 
-  const confirm = await window.api.openDialogConfirm({
+  const protectedWarning = PROTECTED_BRANCH_RE.test(branch.trim())
+    ? `\n⚠ "${branch}" is a protected/shared branch - this push may trigger a real pipeline.`
+    : "";
+  const confirmed = await window.api.openDialogConfirm({
     title: "Confirm Deploy",
     message: `Deploy project "${projectName}" to environment "${env}" with type "${type}"?`,
-    detail: `Branch: ${branch}${dryRun ? "\nMode: DRY RUN (no push)" : ""}`,
+    detail: `Branch: ${branch}${dryRun ? "\nMode: DRY RUN (no push)" : ""}${protectedWarning}`,
   });
-  if (!confirm) return;
+  if (!confirmed) return;
 
   // Disable form
   setFormEnabled(false);
   loadingOverlay.style.display = "flex";
-  logOutput.textContent = "";
+  clearLogContainer(logOutput);
 
   try {
     const result = await window.api.startDeploy({
@@ -524,7 +699,7 @@ async function runDeploy() {
 
     // Display the complete log (replaces the streamed lines, so nothing is lost if one was dropped)
     if (result.logs) {
-      logOutput.textContent = result.logs.join("\n");
+      renderLogLines(logOutput, result.logs);
     }
 
     // Show notification
@@ -535,7 +710,7 @@ async function runDeploy() {
     }
   } catch (err: unknown) {
     const message = (err as Error).message;
-    logOutput.textContent += `\n\nError: ${message}`;
+    appendLogLine(logOutput, `Error: ${message}`, true);
     window.api.showNotification("Deploy Error", message);
   } finally {
     loadingOverlay.style.display = "none";
@@ -586,7 +761,7 @@ async function loadProjectsConfig() {
   } catch (err) {
     projectsConfigError = (err as Error).message;
     console.error("Failed to load config:", err);
-    alert("Failed to load configuration");
+    showToast("Failed to load configuration", "error");
   }
 }
 
@@ -713,7 +888,22 @@ function editProject(index: number) {
 
 async function deleteProject(index: number) {
   const project = projectsConfig!.projects[index];
-  if (!confirm(`Are you sure you want to delete project "${project.name}"?`)) {
+  const confirmed = await showConfirmModal({
+    title: "Delete project",
+    message: `Are you sure you want to delete project "${project.name}"?`,
+    confirmText: "Delete",
+    danger: true,
+  });
+  if (!confirmed) {
+    return;
+  }
+
+  // The modal is async: another window may have replaced the config meanwhile, so re-locate by name
+  const cfg = projectsConfig;
+  const currentIndex = cfg ? cfg.projects.findIndex((p) => p.name === project.name) : -1;
+  if (!cfg || currentIndex === -1) {
+    showToast(`Project "${project.name}" no longer exists`, "warning");
+    renderProjectsList();
     return;
   }
 
@@ -721,9 +911,8 @@ async function deleteProject(index: number) {
   if (editingProjectIndex !== null) {
     hideForm();
   }
-  const cfg = projectsConfig!;
   const snapshot = structuredClone(cfg.projects);
-  cfg.projects.splice(index, 1);
+  cfg.projects.splice(currentIndex, 1);
   if (!(await saveProjectsConfig())) {
     // Skip if another window's update replaced the config while saving
     if (projectsConfig === cfg) cfg.projects = snapshot;
@@ -772,13 +961,13 @@ async function saveProject() {
   const smartAppendCheck = (document.getElementById("projectFileContentSmartAppend") as HTMLInputElement).checked;
 
   if (!projectsConfig?.projects) {
-    alert("Configuration is not loaded. Please reload the app.");
+    showToast("Configuration is not loaded. Please reload the app.", "error");
     return;
   }
 
   // Validation
   if (!name || !repoPath || !envsStr || !typesStr || (commitFormat === "custom" && !commitTemplate) || !cicdFileName) {
-    alert("All fields are required");
+    showToast("All fields are required", "warning");
     return;
   }
 
@@ -792,7 +981,7 @@ async function saveProject() {
     .filter((t) => t);
 
   if (envs.length === 0 || deployTypes.length === 0) {
-    alert("Please provide at least one environment and one deploy type");
+    showToast("Please provide at least one environment and one deploy type", "warning");
     return;
   }
 
@@ -811,7 +1000,7 @@ async function saveProject() {
   };
 
   if (projectsConfig.projects.some((p, i: number) => p.name === name && i !== editingProjectIndex)) {
-    alert(`Project with name "${name}" already exists`);
+    showToast(`Project with name "${name}" already exists`, "warning");
     return;
   }
 
@@ -887,12 +1076,12 @@ async function saveProjectsConfig(): Promise<boolean> {
   try {
     const result = await window.api.saveConfig(projectsConfig!);
     if (!result.success) {
-      alert(`Failed to save config: ${result.error}`);
+      showToast(`Failed to save config: ${result.error}`, "error");
       return false;
     }
     return true;
   } catch (err: unknown) {
-    alert(`Error saving config: ${(err as Error).message}`);
+    showToast(`Error saving config: ${(err as Error).message}`, "error");
     return false;
   }
 }
@@ -944,7 +1133,9 @@ async function selectLogFile(filename: string) {
   try {
     const content = await window.api.readLogFile(filename);
     const logContent = document.getElementById("logContent") as HTMLDivElement;
-    logContent.textContent = content;
+    const lines = content.split(/\r?\n/);
+    if (lines[lines.length - 1] === "") lines.pop(); // file ends with a newline
+    renderLogLines(logContent, lines);
   } catch (err) {
     console.error("Failed to read log file:", err);
   }

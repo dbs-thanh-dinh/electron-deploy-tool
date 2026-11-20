@@ -22,7 +22,7 @@
   
   --success: #28a745;
   --danger: #dc3545;
-  --warning: #ffc107;
+  --warning: #b45309; /* darker amber: #ffc107 is unreadable on white (contrast ~1.6:1) */
   --info: #17a2b8;
 }
 
