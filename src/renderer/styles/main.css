@@ -536,29 +536,7 @@ input:checked + .toggle-slider:before {
   margin-bottom: 8px;
 }
 
-/* Loading Overlay */
-.loading-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.7);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  z-index: 9999;
-}
 
-.spinner {
-  border: 4px solid var(--bg-tertiary);
-  border-top: 4px solid var(--accent-primary);
-  border-radius: 50%;
-  width: 50px;
-  height: 50px;
-  animation: spin 1s linear infinite;
-}
 
 .branch-loading {
   display: flex;
@@ -597,11 +575,6 @@ input:checked + .toggle-slider:before {
   100% { transform: rotate(360deg); }
 }
 
-.loading-overlay p {
-  margin-top: 20px;
-  color: white;
-  font-size: 16px;
-}
 
 /* ===== Update Available Notification Popup ===== */
 .update-notification-popup {
@@ -1108,4 +1081,79 @@ input:checked + .toggle-slider:before {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* ===== Deploy progress (stepper) ===== */
+.deploy-progress {
+  margin-top: 20px;
+  padding: 12px 15px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.deploy-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.deploy-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.step-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--text-muted);
+  box-sizing: border-box;
+}
+
+.deploy-step[data-status="running"] .step-dot {
+  border-color: var(--bg-tertiary);
+  border-top-color: var(--accent-primary);
+  animation: spin 1s linear infinite;
+}
+.deploy-step[data-status="done"] .step-dot { background-color: var(--success); border-color: var(--success); }
+.deploy-step[data-status="failed"] .step-dot { background-color: var(--danger); border-color: var(--danger); }
+.deploy-step[data-status="cancelled"] .step-dot { background-color: var(--warning); border-color: var(--warning); }
+.deploy-step[data-status="skipped"] { color: var(--text-muted); }
+.deploy-step[data-status="skipped"] .step-label { text-decoration: line-through; }
+.deploy-step[data-status="pending"] { color: var(--text-muted); }
+
+.deploy-progress-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.cancel-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Dot on the Deploy nav item while this window deploys */
+.nav-item.deploying .nav-label::after {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background-color: var(--warning);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }

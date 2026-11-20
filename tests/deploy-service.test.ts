@@ -1,9 +1,11 @@
 import { execFileSync } from 'node:child_process';
+import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeployOptions, DeployService } from '../src/main/deploy-service';
+import { DeployStepEventI } from '../src/main/deploy-steps';
 import { ProjectI } from '../src/main/interface';
 
 // DeployService reads app.getPath('userData') when constructed
@@ -302,6 +304,189 @@ describe('DeployService.deploy', () => {
       // Failed before the CICD file was written, so there is nothing to roll back
       expect(joined(result.logs)).not.toContain('Rolling back');
       expect(joined(result.logs)).toContain('cannot fast-forward');
+    });
+  });
+});
+
+describe('DeployService.deploy steps and cancellation', () => {
+  const collect = () => {
+    const events: string[] = [];
+    return { events, onStep: (e: DeployStepEventI) => events.push(`${e.step}:${e.status}`) };
+  };
+  const has = (events: string[], event: string) => events.includes(event);
+
+  it('reports every step of a dry-run, skipping checkout (already on the branch) and push', async () => {
+    const { events, onStep } = collect();
+    const result = await service.deploy(makeOptions({ dryRun: true }), undefined, { onStep });
+    expect(result.success).toBe(true);
+    expect(events).toEqual([
+      'stash:running', 'stash:done', 'checkout:running', 'checkout:skipped', 'pull:running', 'pull:done',
+      'write:running', 'write:done', 'commit:running', 'commit:done', 'push:skipped',
+    ]);
+  });
+
+  it('reports checkout and push as done on a real deploy to another branch', async () => {
+    git(workDir, 'branch', 'release');
+    git(workDir, 'push', '-u', 'origin', 'release');
+    const { events, onStep } = collect();
+    const result = await service.deploy(makeOptions({ branch: 'release' }), undefined, { onStep });
+    expect(result.success).toBe(true);
+    expect(events).toContain('checkout:done');
+    expect(events.slice(-2)).toEqual(['push:running', 'push:done']);
+    expect(result.cancelled).toBeUndefined();
+  });
+
+  it('marks the failing step and emits nothing after it', async () => {
+    fs.writeFileSync(path.join(workDir, 'local.txt'), 'x');
+    git(workDir, 'add', 'local.txt');
+    git(workDir, 'commit', '-m', 'local only');
+    const other = path.join(path.dirname(workDir), 'other');
+    git(path.dirname(workDir), 'clone', remoteDir, other);
+    git(other, 'config', 'user.name', 'O');
+    git(other, 'config', 'user.email', 'o@example.com');
+    git(other, 'config', 'commit.gpgsign', 'false');
+    fs.writeFileSync(path.join(other, 'remote.txt'), 'x');
+    git(other, 'add', 'remote.txt');
+    git(other, 'commit', '-m', 'remote only');
+    git(other, 'push');
+
+    const { events, onStep } = collect();
+    const result = await service.deploy(makeOptions(), undefined, { onStep });
+    expect(result.success).toBe(false);
+    expect(result.cancelled).toBeUndefined();
+    expect(events.at(-1)).toBe('pull:failed');
+    expect(events.some((e) => e.startsWith('write:'))).toBe(false);
+  });
+
+  it('emits no step event when validation fails before the first step', async () => {
+    const { events, onStep } = collect();
+    const result = await service.deploy(makeOptions({ branch: '-evil' }), undefined, { onStep });
+    expect(result.success).toBe(false);
+    expect(events).toEqual([]);
+  });
+
+  it('keeps deploying when the step listener throws', async () => {
+    const result = await service.deploy(makeOptions({ dryRun: true }), undefined, {
+      onStep: () => {
+        throw new Error('window closed');
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('works without hooks (old call style)', async () => {
+    const result = await service.deploy(makeOptions({ dryRun: true }));
+    expect(result.success).toBe(true);
+  });
+
+  describe('cancel before anything ran', () => {
+    it('stops at the first boundary, touches nothing and reports a cancellation', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const { events, onStep } = collect();
+      const headBefore = git(workDir, 'rev-parse', 'HEAD');
+      const result = await service.deploy(makeOptions(), undefined, { onStep, signal: controller.signal });
+
+      expect(result.success).toBe(false);
+      expect(result.cancelled).toBe(true);
+      expect(result.error).toBe('Deploy cancelled by user');
+      expect(events).toEqual(['stash:cancelled']);
+      expect(git(workDir, 'rev-parse', 'HEAD')).toBe(headBefore);
+      expect(git(workDir, 'stash', 'list')).toBe('');
+      expect(readCicd()).toBe(INITIAL_CICD);
+      expect(joined(result.logs)).toContain('⛔ Deploy cancelled by user');
+      expect(joined(result.logs)).not.toContain('Deploy failed');
+    });
+  });
+
+  describe('cancel at a step boundary after the CICD file was written', () => {
+    it('rolls the file back and never commits', async () => {
+      const controller = new AbortController();
+      const events: string[] = [];
+      const headBefore = git(workDir, 'rev-parse', 'HEAD');
+      const result = await service.deploy(makeOptions(), undefined, {
+        signal: controller.signal,
+        onStep: (e) => {
+          events.push(`${e.step}:${e.status}`);
+          if (e.step === 'write' && e.status === 'done') controller.abort(); // user clicks Cancel here
+        },
+      });
+
+      expect(result.cancelled).toBe(true);
+      expect(events.at(-1)).toBe('commit:cancelled');
+      expect(has(events, 'commit:running')).toBe(false);
+      expect(readCicd()).toBe(INITIAL_CICD);
+      expect(git(workDir, 'status', '--porcelain')).toBe('');
+      expect(git(workDir, 'rev-parse', 'HEAD')).toBe(headBefore);
+      expect(git(remoteDir, 'rev-parse', 'main')).toBe(headBefore);
+      expect(joined(result.logs)).toContain('✓ Rolled back CICD.txt');
+    });
+  });
+
+  describe('cancel after the point of no return', () => {
+    it('ignores an abort that arrives once the commit started: commit and push complete', async () => {
+      const controller = new AbortController();
+      const headBefore = git(workDir, 'rev-parse', 'HEAD');
+      const result = await service.deploy(makeOptions(), undefined, {
+        signal: controller.signal,
+        onStep: (e) => {
+          if (e.step === 'commit' && e.status === 'running') controller.abort();
+        },
+      });
+      expect(result.success).toBe(true);
+      expect(result.cancelled).toBeUndefined();
+      expect(git(remoteDir, 'rev-parse', 'main')).not.toBe(headBefore);
+      expect(git(remoteDir, 'log', '-1', '--format=%s', 'main')).toBe('deploy: dev, api');
+    });
+  });
+
+  describe('cancel while git pull is running', () => {
+    let hangingServer: net.Server;
+    const sockets = new Set<net.Socket>();
+
+    beforeEach(async () => {
+      // Accepts connections and never answers, so `git pull` blocks on the network until it is killed
+      hangingServer = net.createServer((socket) => {
+        sockets.add(socket);
+        socket.on('error', () => undefined);
+        socket.on('close', () => sockets.delete(socket));
+      });
+      await new Promise<void>((resolve) => hangingServer.listen(0, '127.0.0.1', resolve));
+    });
+
+    afterEach(async () => {
+      sockets.forEach((socket) => socket.destroy());
+      await new Promise<void>((resolve) => hangingServer.close(() => resolve()));
+    });
+
+    it('kills the pull, waits for it to exit, and leaves the repo usable', async () => {
+      const { port } = hangingServer.address() as net.AddressInfo;
+      git(workDir, 'remote', 'set-url', 'origin', `http://127.0.0.1:${port}/repo.git`);
+      const controller = new AbortController();
+      const events: string[] = [];
+      const headBefore = git(workDir, 'rev-parse', 'HEAD');
+      const startedAt = Date.now();
+
+      const result = await service.deploy(makeOptions(), undefined, {
+        signal: controller.signal,
+        onStep: (e) => {
+          events.push(`${e.step}:${e.status}`);
+          // Give git time to really connect, then cancel while it is blocked
+          if (e.step === 'pull' && e.status === 'running') setTimeout(() => controller.abort(), 1500);
+        },
+      });
+
+      expect(Date.now() - startedAt).toBeLessThan(25_000); // not the 5 minute git timeout
+      expect(result.cancelled).toBe(true);
+      expect(events.at(-1)).toBe('pull:cancelled');
+      expect(joined(result.logs)).toContain('⛔ git pull interrupted');
+      expect(joined(result.logs)).not.toContain('Pull failed. Common causes');
+      expect(joined(result.logs)).not.toContain('Error running: git pull');
+      // Nothing was written, committed or left locked
+      expect(fs.existsSync(path.join(workDir, '.git', 'index.lock'))).toBe(false);
+      expect(git(workDir, 'rev-parse', 'HEAD')).toBe(headBefore);
+      expect(readCicd()).toBe(INITIAL_CICD);
+      expect(git(workDir, 'status', '--porcelain')).toBe('');
     });
   });
 });

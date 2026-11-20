@@ -43,6 +43,7 @@ interface ApiStubI {
   startDeploy: ReturnType<typeof vi.fn>;
   showNotification: ReturnType<typeof vi.fn>;
   readLogFile: ReturnType<typeof vi.fn>;
+  cancelDeploy: ReturnType<typeof vi.fn>;
   [key: string]: ReturnType<typeof vi.fn>;
 }
 
@@ -62,6 +63,12 @@ interface HooksI {
   loadProjectsConfig(): Promise<void>;
   runDeploy(): Promise<void>;
   handleDeploy(): Promise<void>;
+  applyDeployStep(event: { step: string; status: string }): void;
+  resetDeployProgress(): void;
+  handleCancelDeploy(): Promise<void>;
+  isProjectDeploying(name: string): boolean;
+  setActiveDeployments(value: string[]): void;
+  getPendingConfigRefresh(): boolean;
   appendDeployLogLine(line: string): void;
   setupDeployEventListeners(): void;
   selectLogFile(filename: string): Promise<void>;
@@ -88,7 +95,10 @@ const HOOKS_SOURCE = `
   classifyLogEntry, groupLogEntries, renderLogLines, appendLogLine, clearLogContainer, getLogText,
   showToast, showConfirmModal, deleteProject, editProject, saveProject, loadDeployConfig, loadProjectsConfig,
   runDeploy, handleDeploy, appendDeployLogLine, setupDeployEventListeners, selectLogFile, renderProjectsList,
+  applyDeployStep, resetDeployProgress, handleCancelDeploy, isProjectDeploying,
   PROTECTED_BRANCH_RE,
+  setActiveDeployments(v) { activeDeployments = v; },
+  getPendingConfigRefresh() { return pendingConfigRefresh; },
   setProjectsConfig(c) { projectsConfig = c; },
   getProjectsConfig() { return projectsConfig; },
   setCurrentConfig(c) { currentConfig = c; },
@@ -145,6 +155,8 @@ async function createEnv(): Promise<EnvI> {
     startDeploy: vi.fn().mockResolvedValue({ success: true, logs: [] } as DeployResultFixtureI),
     showNotification: vi.fn(),
     readLogFile: vi.fn(),
+    cancelDeploy: vi.fn().mockResolvedValue(true),
+    onDeployStep: vi.fn(),
     // Wired up by the DOMContentLoaded init
     getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
     onUpdateAvailable: vi.fn(),
@@ -216,6 +228,7 @@ describe('classifyLogEntry', () => {
     ['[2026-11-20 10:00:00] ⚠️ Running in DRY-RUN mode', 'log-warn'],
     ['[2026-11-20 10:00:00] ⚠ Local changes were stashed', 'log-warn'],
     ['[2026-11-20 10:00:00] ↩️ Rolling back CICD.txt', 'log-warn'],
+    ['[2026-11-20 10:00:00] ⛔ Deploy cancelled by user', 'log-warn'],
     ['[2026-11-20 10:00:00] ✅ SUCCESS: Deploy completed!', 'log-success'],
     ['[2026-11-20 10:00:00] ✓ Rolled back CICD.txt', 'log-success'],
     ['[2026-11-20 10:00:00] $ git pull --ff-only', 'log-cmd'],
@@ -742,7 +755,7 @@ describe('runDeploy', () => {
     env.api.openDialogConfirm.mockResolvedValue(false);
     await env.hooks.runDeploy();
     expect(env.api.startDeploy).not.toHaveBeenCalled();
-    expect(byId(env, 'loadingOverlay').style.display).toBe('none');
+    expect(byId(env, 'deployProgress').style.display).toBe('none'); // the stepper only appears once the deploy starts
   });
 
   it('renders the final log with colours and notifies on success', async () => {
@@ -755,7 +768,52 @@ describe('runDeploy', () => {
     await env.hooks.runDeploy();
     expect(logClasses(env, 'deployLog')).toEqual(['log-line log-cmd', 'log-line log-success']);
     expect(env.api.showNotification).toHaveBeenCalledWith('Deploy Completed', 'P deployed successfully to dev');
-    expect(byId(env, 'loadingOverlay').style.display).toBe('none');
+    expect(byId(env, 'cancelDeployBtn').style.display).toBe('none');
+  });
+
+  it('notifies a cancellation (and not a failure) when the result says cancelled', async () => {
+    const env = await createEnv();
+    setupDeployForm(env, 'develop');
+    env.api.startDeploy.mockResolvedValue({
+      success: false,
+      cancelled: true,
+      error: 'Deploy cancelled by user',
+      logs: ['[2026-11-20 10:00:00] ⛔ Deploy cancelled by user'],
+    });
+    await env.hooks.runDeploy();
+    expect(env.api.showNotification).toHaveBeenCalledTimes(1);
+    expect(env.api.showNotification.mock.calls[0][0]).toBe('Deploy Cancelled');
+    expect(logClasses(env, 'deployLog')).toEqual(['log-line log-warn']);
+  });
+
+  it('decides from the result, not from a Cancel click: a cancel that came too late still reports success', async () => {
+    const env = await createEnv();
+    setupDeployForm(env, 'develop');
+    env.api.startDeploy.mockImplementation(async () => {
+      byId<HTMLButtonElement>(env, 'cancelDeployBtn').click();
+      return { success: true, logs: [] };
+    });
+    env.api.cancelDeploy.mockResolvedValue(false);
+    env.hooks.setupDeployEventListeners();
+    await env.hooks.runDeploy();
+    expect(env.api.showNotification).toHaveBeenCalledWith('Deploy Completed', 'P deployed successfully to dev');
+  });
+
+  it('shows the stepper reset to pending when the deploy starts and keeps it visible afterwards', async () => {
+    const env = await createEnv();
+    setupDeployForm(env, 'develop');
+    let during: string[] = [];
+    env.api.startDeploy.mockImplementation(async () => {
+      during = Array.from(env.document.querySelectorAll<HTMLElement>('.deploy-step')).map((el) => el.dataset.status!);
+      expect(byId(env, 'deployProgress').style.display).toBe('block');
+      expect(byId(env, 'cancelDeployBtn').style.display).toBe('');
+      return { success: true, logs: [] };
+    });
+    // stale state from a previous deploy must not leak into the new one
+    env.hooks.applyDeployStep({ step: 'stash', status: 'done' });
+    await env.hooks.runDeploy();
+    expect(during).toEqual(['pending', 'pending', 'pending', 'pending', 'pending', 'pending']);
+    expect(byId(env, 'deployProgress').style.display).toBe('block');
   });
 
   it('notifies with the error when the deploy fails', async () => {
@@ -789,8 +847,7 @@ describe('runDeploy', () => {
     expect(logClasses(env, 'deployLog')).toEqual(['log-line log-cmd', 'log-line log-error']);
     expect(byId(env, 'deployLog').lastElementChild!.textContent).toBe('Error: boom');
     expect(env.api.showNotification).toHaveBeenCalledWith('Deploy Error', 'boom');
-    expect(byId(env, 'loadingOverlay').style.display).toBe('none');
-    expect(byId(env, 'loadingText').textContent).toBe('Deploying...');
+    expect(byId(env, 'cancelDeployBtn').style.display).toBe('none');
     expect(byId<HTMLSelectElement>(env, 'projectSelect').disabled).toBe(false);
   });
 });
@@ -802,19 +859,192 @@ describe('appendDeployLogLine', () => {
     expect(byId(env, 'deployLog').children).toHaveLength(0);
   });
 
-  it('appends coloured lines and mirrors the message (without timestamp) on the overlay', async () => {
+  it('appends coloured lines while deploying', async () => {
     const env = await createEnv();
     env.hooks.setIsDeploying(true);
     env.hooks.appendDeployLogLine('[2026-11-20 10:00:00] ✅ done');
     expect(logClasses(env, 'deployLog')).toEqual(['log-line log-success']);
-    expect(byId(env, 'loadingText').textContent).toBe('✅ done');
   });
 
-  it('leaves the overlay text alone for blank messages', async () => {
+  it('there is no blocking overlay any more', async () => {
+    const env = await createEnv();
+    expect(env.document.getElementById('loadingOverlay')).toBeNull();
+  });
+});
+
+describe('deploy stepper and cancel', () => {
+  const statuses = (env: EnvI) =>
+    Object.fromEntries(Array.from(env.document.querySelectorAll<HTMLElement>('.deploy-step')).map((el) => [el.dataset.step, el.dataset.status]));
+
+  it('lists the six steps in order', async () => {
+    const env = await createEnv();
+    expect(Array.from(env.document.querySelectorAll<HTMLElement>('.deploy-step')).map((el) => el.dataset.step)).toEqual([
+      'stash', 'checkout', 'pull', 'write', 'commit', 'push',
+    ]);
+  });
+
+  it('applies step events only while this window is deploying', async () => {
+    const env = await createEnv();
+    env.hooks.applyDeployStep({ step: 'stash', status: 'running' });
+    expect(statuses(env).stash).toBe('pending');
+    env.hooks.setIsDeploying(true);
+    env.hooks.applyDeployStep({ step: 'stash', status: 'running' });
+    env.hooks.applyDeployStep({ step: 'stash', status: 'done' });
+    env.hooks.applyDeployStep({ step: 'checkout', status: 'skipped' });
+    expect(statuses(env)).toMatchObject({ stash: 'done', checkout: 'skipped', pull: 'pending' });
+  });
+
+  it('ignores an unknown step name without throwing', async () => {
     const env = await createEnv();
     env.hooks.setIsDeploying(true);
-    env.hooks.appendDeployLogLine('[2026-11-20 10:00:00] ');
-    expect(byId(env, 'loadingText').textContent).toBe('Deploying...');
+    expect(() => env.hooks.applyDeployStep({ step: '"] , x[', status: 'done' })).not.toThrow();
+    expect(Object.values(statuses(env)).every((v) => v === 'pending')).toBe(true);
+  });
+
+  it('locks the Cancel button and explains why once the commit starts', async () => {
+    const env = await createEnv();
+    env.hooks.setIsDeploying(true);
+    env.hooks.resetDeployProgress();
+    expect(byId<HTMLButtonElement>(env, 'cancelDeployBtn').disabled).toBe(false);
+    env.hooks.applyDeployStep({ step: 'write', status: 'done' });
+    expect(byId<HTMLButtonElement>(env, 'cancelDeployBtn').disabled).toBe(false);
+    env.hooks.applyDeployStep({ step: 'commit', status: 'running' });
+    expect(byId<HTMLButtonElement>(env, 'cancelDeployBtn').disabled).toBe(true);
+    expect(byId(env, 'cancelDeployHint').textContent).toContain('can no longer cancel');
+  });
+
+  it('Cancel asks main to cancel and shows a pending state', async () => {
+    const env = await createEnv();
+    env.hooks.setupDeployEventListeners();
+    env.hooks.setIsDeploying(true);
+    env.hooks.resetDeployProgress();
+    byId<HTMLButtonElement>(env, 'cancelDeployBtn').click();
+    await flush();
+    expect(env.api.cancelDeploy).toHaveBeenCalledTimes(1);
+    expect(byId<HTMLButtonElement>(env, 'cancelDeployBtn').disabled).toBe(true);
+    expect(byId(env, 'cancelDeployBtn').textContent).toBe('Cancelling...');
+    expect(byId(env, 'cancelDeployHint').textContent).toContain('current git command');
+  });
+
+  it('warns "too late" when main refuses to cancel', async () => {
+    const env = await createEnv();
+    env.api.cancelDeploy.mockResolvedValue(false);
+    env.hooks.setupDeployEventListeners();
+    env.hooks.setIsDeploying(true);
+    env.hooks.resetDeployProgress();
+    byId<HTMLButtonElement>(env, 'cancelDeployBtn').click();
+    await flush();
+    expect(lastToast(env)!.className).toContain('toast-warning');
+    expect(lastToast(env)!.textContent).toContain('Too late to cancel');
+    expect(byId(env, 'cancelDeployBtn').textContent).toBe('Cancel deploy');
+  });
+
+  it('re-enables the button and reports when the cancel request itself fails', async () => {
+    const env = await createEnv();
+    env.api.cancelDeploy.mockRejectedValue(new Error('ipc down'));
+    env.hooks.setupDeployEventListeners();
+    env.hooks.setIsDeploying(true);
+    env.hooks.resetDeployProgress();
+    byId<HTMLButtonElement>(env, 'cancelDeployBtn').click();
+    await flush();
+    expect(byId<HTMLButtonElement>(env, 'cancelDeployBtn').disabled).toBe(false);
+    expect(lastToast(env)!.className).toContain('toast-error');
+    expect(lastToast(env)!.textContent).toContain('Failed to cancel: ipc down');
+  });
+
+  it('shows the pulsing dot on the Deploy nav item only while deploying, and registers the step listener at init', async () => {
+    const env = await createEnv();
+    env.api.loadConfig.mockResolvedValue(mkConfig('P'));
+    await env.init();
+    expect(env.api.onDeployStep).toHaveBeenCalledTimes(1);
+    const nav = env.document.querySelector('.nav-item[data-page="deploy"]')!;
+    setupDeployForm(env, 'develop');
+    let during = false;
+    env.api.startDeploy.mockImplementation(async () => {
+      during = nav.classList.contains('deploying');
+      return { success: true, logs: [] };
+    });
+    await env.hooks.handleDeploy();
+    expect(during).toBe(true);
+    expect(nav.classList.contains('deploying')).toBe(false);
+  });
+});
+
+describe('projects being deployed are locked', () => {
+  it('disables Edit and Delete only for the deploying project', async () => {
+    const env = await createEnv();
+    env.hooks.setProjectsConfig(mkConfig('A', 'B'));
+    env.hooks.setActiveDeployments(['B']);
+    env.hooks.renderProjectsList();
+    const disabled = (cls: string) => Array.from(env.document.querySelectorAll<HTMLButtonElement>(cls)).map((b) => b.disabled);
+    expect(disabled('.edit-btn')).toEqual([false, true]);
+    expect(disabled('.delete-btn')).toEqual([false, true]);
+  });
+
+  it('editProject and deleteProject refuse a deploying project', async () => {
+    const env = await createEnv();
+    env.hooks.setProjectsConfig(mkConfig('A', 'B'));
+    env.hooks.setActiveDeployments(['A']);
+    env.hooks.editProject(0);
+    expect(byId(env, 'projectFormContainer').style.display).not.toBe('block');
+    expect(lastToast(env)!.textContent).toContain('being deployed');
+    await env.hooks.deleteProject(0);
+    expect(env.document.getElementById('confirmModal')!.style.display).toBe('none');
+    expect(env.api.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it('deleteProject aborts when the project starts deploying while the confirmation is open', async () => {
+    const env = await createEnv();
+    env.hooks.setProjectsConfig(mkConfig('A', 'B'));
+    const done = env.hooks.deleteProject(0);
+    env.hooks.setActiveDeployments(['A']);
+    byId<HTMLButtonElement>(env, 'confirmModalOk').click();
+    await done;
+    expect(env.api.saveConfig).not.toHaveBeenCalled();
+    expect(env.hooks.getProjectsConfig()!.projects.map((p) => p.name)).toEqual(['A', 'B']);
+    expect(lastToast(env)!.textContent).toContain('being deployed');
+  });
+
+  it('saveProject refuses to save the project that is being deployed (rename guard)', async () => {
+    const env = await createEnv();
+    env.hooks.setProjectsConfig(mkConfig('A', 'B'));
+    env.hooks.editProject(0);
+    env.hooks.setActiveDeployments(['A']); // deploy started after the form was opened
+    byId<HTMLInputElement>(env, 'projectName').value = 'A-renamed';
+    await env.hooks.saveProject();
+    expect(env.api.saveConfig).not.toHaveBeenCalled();
+    expect(lastToast(env)!.textContent).toContain('being deployed');
+  });
+
+  it('a successful save while this window deploys schedules a refresh for afterwards', async () => {
+    const env = await createEnv();
+    env.hooks.setProjectsConfig(mkConfig('A', 'B'));
+    env.hooks.setIsDeploying(true);
+    const done = env.hooks.deleteProject(1);
+    byId<HTMLButtonElement>(env, 'confirmModalOk').click();
+    await done;
+    expect(env.hooks.getPendingConfigRefresh()).toBe(true);
+  });
+
+  it('does not schedule a refresh when saving while idle', async () => {
+    const env = await createEnv();
+    env.hooks.setProjectsConfig(mkConfig('A', 'B'));
+    const done = env.hooks.deleteProject(1);
+    byId<HTMLButtonElement>(env, 'confirmModalOk').click();
+    await done;
+    expect(env.hooks.getPendingConfigRefresh()).toBe(false);
+  });
+
+  it('re-renders the Projects list when the active deployments change', async () => {
+    const env = await createEnv();
+    env.api.loadConfig.mockResolvedValue(mkConfig('A', 'B'));
+    await env.init();
+    const onStatus = env.api.onDeploymentStatusChanged.mock.calls[0][0] as (projects: string[]) => void;
+    expect(env.document.querySelectorAll<HTMLButtonElement>('.edit-btn:disabled')).toHaveLength(0);
+    onStatus(['B']);
+    expect(env.document.querySelectorAll<HTMLButtonElement>('.edit-btn:disabled')).toHaveLength(1);
+    onStatus([]);
+    expect(env.document.querySelectorAll<HTMLButtonElement>('.edit-btn:disabled')).toHaveLength(0);
   });
 });
 
@@ -1103,6 +1333,7 @@ describe('markup contract', () => {
     [
       'toastContainer', 'confirmModal', 'confirmModalTitle', 'confirmModalMessage', 'confirmModalOk',
       'confirmModalCancel', 'dryRunBadge', 'copyLogBtn', 'clearLogBtn', 'deployLog', 'logContent',
+      'deployProgress', 'cancelDeployBtn', 'cancelDeployHint',
     ].forEach((id) => expect(env.document.getElementById(id), id).not.toBeNull());
     expect(byId(env, 'toastContainer').getAttribute('aria-live')).toBe('polite');
     expect(env.document.querySelector('#confirmModal [role="dialog"]')!.getAttribute('aria-modal')).toBe('true');

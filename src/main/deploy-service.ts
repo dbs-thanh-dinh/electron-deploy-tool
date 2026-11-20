@@ -1,10 +1,11 @@
-import { execFile } from 'node:child_process';
+import { execFile, ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { ProjectI } from './interface';
 import { pruneOldLogs } from './log-utils';
+import { DeployCancelledError, DeployStepEventI, DeployStepId, DeployStepStatus } from './deploy-steps';
 import { applyCicdEntry, resolveCicdFile, getCommitMsg, getFileContent, getGitErrorMessage, getLocalDate, getLocalTimestamp } from './deploy-utils';
 
 const execFileAsync = promisify(execFile);
@@ -27,6 +28,25 @@ export interface DeployResult {
   success: boolean;
   logs: string[];
   error?: string;
+  /** The user cancelled before the point of no return (the commit); `success` is false and the CICD file was rolled back */
+  cancelled?: boolean;
+}
+
+export interface DeployHooks {
+  /** Called when a step starts / finishes / is skipped / fails / is cancelled */
+  onStep?: (event: DeployStepEventI) => void;
+  /** Aborting stops the deploy at the next step boundary and kills an in-flight `git pull`. Ignored once the commit starts. */
+  signal?: AbortSignal;
+}
+
+/** Kills a process and all of its children. A plain child.kill() on Windows leaves git's sub-processes running. */
+function killProcessTree(child: ChildProcess): void {
+  if (!child.pid) return;
+  if (process.platform === 'win32') {
+    execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => undefined);
+  } else {
+    child.kill('SIGKILL');
+  }
 }
 
 export class DeployService {
@@ -79,11 +99,21 @@ export class DeployService {
     };
   }
 
-  /** Runs git, logs the command and its output. Returns trimmed stdout, or null when git fails. */
-  private async runGitOutput(args: string[], cwd: string, logs: string[]): Promise<string | null> {
+  /**
+   * Runs git, logs the command and its output. Returns trimmed stdout, or null when git fails.
+   * With `signal`, aborting kills the whole git process tree, waits for it to exit, then throws DeployCancelledError.
+   */
+  private async runGitOutput(args: string[], cwd: string, logs: string[], signal?: AbortSignal): Promise<string | null> {
+    let onAbort: (() => void) | undefined;
     try {
       this.log(`$ git ${args.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`, logs);
-      const { stdout } = await execFileAsync('git', args, this.getGitOptions(cwd));
+      const pending = execFileAsync('git', args, this.getGitOptions(cwd));
+      if (signal) {
+        onAbort = () => killProcessTree(pending.child);
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      }
+      const { stdout } = await pending;
 
       const output = stdout.toString().trim();
       if (output) {
@@ -91,15 +121,25 @@ export class DeployService {
       }
       return output;
     } catch (err: unknown) {
+      if (signal?.aborted) {
+        // The process has exited (the promise settles on 'close'); a leftover lock means the kill was not clean
+        this.log(`⛔ git ${args[0]} interrupted`, logs);
+        if (fs.existsSync(path.join(cwd, '.git', 'index.lock'))) {
+          this.log('⚠️ .git/index.lock still exists after cancelling; remove it manually if no other git process is running', logs);
+        }
+        throw new DeployCancelledError();
+      }
       this.log(`❌ Error running: git ${args[0]}`, logs);
       // String() keeps the original output ("undefined") when the error carries no message
       this.log(String(getGitErrorMessage(err)), logs);
       return null;
+    } finally {
+      if (onAbort) signal?.removeEventListener('abort', onAbort);
     }
   }
 
-  private async runGit(args: string[], cwd: string, logs: string[]): Promise<boolean> {
-    return (await this.runGitOutput(args, cwd, logs)) !== null;
+  private async runGit(args: string[], cwd: string, logs: string[], signal?: AbortSignal): Promise<boolean> {
+    return (await this.runGitOutput(args, cwd, logs, signal)) !== null;
   }
 
   /** Hash of the newest stash entry ('' when there is none or git fails). Silent: not written to the log. */
@@ -135,9 +175,27 @@ export class DeployService {
   }
 
   /** `onLog` receives every log line as soon as it is written (the full list is still returned at the end). */
-  async deploy(options: DeployOptions, onLog?: (line: string) => void): Promise<DeployResult> {
+  async deploy(options: DeployOptions, onLog?: (line: string) => void, hooks: DeployHooks = {}): Promise<DeployResult> {
     const logs: string[] = [];
     if (onLog) this.logListeners.set(logs, onLog);
+    const { signal } = hooks;
+    let currentStep: DeployStepId | null = null;
+    const emit = (step: DeployStepId, status: DeployStepStatus) => {
+      // Like the log listener: a failing UI callback must never break the deploy
+      try {
+        hooks.onStep?.({ step, status });
+      } catch (err) {
+        console.error('Step listener failed:', err);
+      }
+    };
+    const begin = (step: DeployStepId, cancellable = true) => {
+      currentStep = step;
+      if (cancellable && signal?.aborted) throw new DeployCancelledError();
+      emit(step, 'running');
+    };
+    const finish = (status: DeployStepStatus = 'done') => {
+      if (currentStep) emit(currentStep, status);
+    };
     const { project, branch, env, type, dryRun, commitTemplate, fileContentTemplate } = options;
     const repoPath = project.repoPath;
     let cicdPathspec: string | null = null;
@@ -171,6 +229,7 @@ export class DeployService {
       cicdPathspec = cicdFile.pathspec;
 
       // Git operations
+      begin('stash');
       const stashBefore = await this.getTopStash(repoPath);
       if (!(await this.runGit(['stash', 'save', 'Auto stash before deploy'], repoPath, logs))) {
         throw new Error('Git stash failed');
@@ -181,6 +240,9 @@ export class DeployService {
       if (stashAfter && stashAfter !== stashBefore) {
         this.log('⚠ Local changes were stashed and NOT restored. Run `git stash pop` in the repo to get them back.', logs);
       }
+      finish();
+
+      begin('checkout');
 
       const currentBranch = await this.runGitOutput(['rev-parse', '--abbrev-ref', 'HEAD'], repoPath, logs);
       if (currentBranch === null) {
@@ -188,17 +250,24 @@ export class DeployService {
       }
       if (currentBranch === branch) {
         this.log(`Current branch: ${currentBranch}`, logs);
+        finish('skipped');
       } else if (!(await this.runGit(['checkout', branch], repoPath, logs))) {
         throw new Error('Git checkout failed');
+      } else {
+        finish();
       }
 
-      // --ff-only: never create a merge commit or leave the repo in a conflicted state
-      if (!(await this.runGit(['pull', '--ff-only'], repoPath, logs))) {
+      // --ff-only: never create a merge commit or leave the repo in a conflicted state.
+      // Only the pull may be killed mid-run (the signal is not passed to any other git command).
+      begin('pull');
+      if (!(await this.runGit(['pull', '--ff-only'], repoPath, logs, signal))) {
         this.log('ℹ️ Pull failed. Common causes: the local branch cannot fast-forward (e.g. unpushed local commits from a previous deploy or dry-run), no upstream branch, or a network/auth problem.', logs);
         throw new Error('Git pull failed');
       }
+      finish();
 
       // Update CICD.txt
+      begin('write');
       const cicdFileContent = getFileContent(fileContentTemplate, env, type);
       this.updateCICDFile(logs, project, cicdFileContent);
       cicdWritten = true;
@@ -211,34 +280,44 @@ export class DeployService {
       if (!(await this.hasStagedChanges(cicdPathspec, repoPath, logs))) {
         throw new Error(`Nothing to commit: ${cicdPathspec} has no changes`);
       }
+      finish();
       
+      // Last chance to cancel (rolls the CICD file back); from here on the commit and push always run to the end
+      begin('commit');
       const commitMsg = getCommitMsg(commitTemplate, env, type);
       if (!(await this.runGit(['commit', '-m', commitMsg], repoPath, logs))) {
         throw new Error('Git commit failed');
       }
       committed = true;
+      finish();
 
       // Push (if not dry-run)
       if (dryRun) {
+        currentStep = 'push';
+        finish('skipped');
         this.log('DRY-RUN: Skipping push step', logs);
         this.log('✅ SUCCESS: Dry-run completed (no push)', logs);
       } else {
+        begin('push', false);
         if (!(await this.runGit(['push'], repoPath, logs))) {
           this.log('ℹ️ The commit was created locally but NOT pushed. Fix the push problem and push manually, or the next deploy will need to fast-forward.', logs);
           throw new Error('Git push failed');
         }
+        finish();
         this.log('✅ SUCCESS: Deploy completed!', logs);
       }
 
       return { success: true, logs };
     } catch (err: unknown) {
+      const cancelled = err instanceof DeployCancelledError;
       const message = (err as Error).message;
-      this.log(`❌ Deploy failed: ${message}`, logs);
+      this.log(cancelled ? `⛔ ${message}` : `❌ Deploy failed: ${message}`, logs);
+      finish(cancelled ? 'cancelled' : 'failed');
       // Only roll back while nothing was committed; a created commit is left untouched
       if (cicdWritten && !committed && cicdPathspec) {
         await this.rollbackCicdFile(cicdPathspec, repoPath, logs);
       }
-      return { success: false, logs, error: message };
+      return cancelled ? { success: false, logs, error: message, cancelled: true } : { success: false, logs, error: message };
     } finally {
       this.log('', logs);
     }

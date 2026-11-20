@@ -19,6 +19,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Live deploy log: only this window's own deploy sends these lines
   window.api.onDeployLog((line) => appendDeployLogLine(line));
+  window.api.onDeployStep((event) => applyDeployStep(event));
 });
 
 function initNavigation() {
@@ -211,7 +212,7 @@ const logSources = new WeakMap<HTMLElement, string[]>(); // plain-text entries b
 function classifyLogEntry(entry: string): string {
   const text = entry.replace(LOG_TIMESTAMP_RE, "").trim();
   if (text.startsWith("❌") || /^(Error|fatal)\b/i.test(text)) return "log-error";
-  if (text.startsWith("⚠") || text.startsWith("↩")) return "log-warn";
+  if (text.startsWith("⚠") || text.startsWith("↩") || text.startsWith("⛔")) return "log-warn";
   if (text.startsWith("✅") || text.startsWith("✓")) return "log-success";
   if (text.startsWith("$ ")) return "log-cmd";
   if (text.startsWith("ℹ") || text.startsWith("DRY-RUN")) return "log-info";
@@ -397,6 +398,7 @@ async function initDeployPage() {
   window.api.onDeploymentStatusChanged((projects: string[]) => {
     activeDeployments = projects;
     updateDeployButtonState();
+    if (projectsConfig !== null || projectsConfigError !== null) renderProjectsList();
   });
 
   // Load initial active deployments
@@ -518,6 +520,8 @@ function setupDeployEventListeners() {
     clearLogOutput();
   });
 
+  (document.getElementById("cancelDeployBtn") as HTMLButtonElement).addEventListener("click", handleCancelDeploy);
+
   const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
   copyLogBtn.addEventListener("click", async () => {
     const text = getLogText(document.getElementById("deployLog") as HTMLDivElement);
@@ -615,11 +619,59 @@ function populateBranchSelect(branches: string[]) {
 function appendDeployLogLine(line: string) {
   if (!isDeploying) return;
   const logOutput = document.getElementById("deployLog") as HTMLDivElement;
-  const loadingText = document.getElementById("loadingText");
   appendLogLine(logOutput, line);
-  // The overlay covers the log pane, so also show the latest line there
-  const message = line.replace(/^\[[^\]]*\]\s*/, "").trim();
-  if (loadingText && message) loadingText.textContent = message;
+}
+
+// ===== DEPLOY PROGRESS (stepper + cancel) =====
+function getStepElements(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>("#deployProgress .deploy-step"));
+}
+
+function resetDeployProgress() {
+  (document.getElementById("deployProgress") as HTMLDivElement).style.display = "block";
+  getStepElements().forEach((el) => (el.dataset.status = "pending"));
+  const cancelBtn = document.getElementById("cancelDeployBtn") as HTMLButtonElement;
+  cancelBtn.style.display = "";
+  cancelBtn.disabled = false;
+  cancelBtn.textContent = "Cancel deploy";
+  (document.getElementById("cancelDeployHint") as HTMLSpanElement).textContent = "";
+}
+
+function applyDeployStep(event: DeployStepEventI) {
+  if (!isDeploying) return;
+  getStepElements()
+    .filter((el) => el.dataset.step === event.step)
+    .forEach((el) => (el.dataset.status = event.status));
+  if (event.step === "commit" && event.status === "running") {
+    // Past the point of no return: the commit and push always complete
+    (document.getElementById("cancelDeployBtn") as HTMLButtonElement).disabled = true;
+    (document.getElementById("cancelDeployHint") as HTMLSpanElement).textContent = "Commit started - can no longer cancel";
+  }
+}
+
+function hideCancelButton() {
+  (document.getElementById("cancelDeployBtn") as HTMLButtonElement).style.display = "none";
+  (document.getElementById("cancelDeployHint") as HTMLSpanElement).textContent = "";
+}
+
+async function handleCancelDeploy() {
+  const cancelBtn = document.getElementById("cancelDeployBtn") as HTMLButtonElement;
+  const hint = document.getElementById("cancelDeployHint") as HTMLSpanElement;
+  cancelBtn.disabled = true;
+  cancelBtn.textContent = "Cancelling...";
+  try {
+    const accepted = await window.api.cancelDeploy();
+    if (accepted) {
+      hint.textContent = "Stops after the current git command (a running pull is interrupted)";
+    } else {
+      cancelBtn.textContent = "Cancel deploy";
+      showToast("Too late to cancel: the commit has already started", "warning");
+    }
+  } catch (err: unknown) {
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = "Cancel deploy";
+    showToast(`Failed to cancel: ${(err as Error).message}`, "error");
+  }
 }
 
 function clearLogOutput() {
@@ -630,11 +682,13 @@ async function handleDeploy() {
   if (isDeploying) return;
   isDeploying = true;
   updateDeployButtonState();
+  document.querySelector('.nav-item[data-page="deploy"]')?.classList.add("deploying");
 
   try {
     await runDeploy();
   } finally {
     isDeploying = false;
+    document.querySelector('.nav-item[data-page="deploy"]')?.classList.remove("deploying");
     updateDeployButtonState();
     if (pendingConfigRefresh) {
       refreshConfigFromOtherWindow();
@@ -651,7 +705,6 @@ async function runDeploy() {
   const commitTemplateInput = document.getElementById("commitTemplate") as HTMLInputElement;
   const fileContentTemplateInput = document.getElementById("fileContentTemplate") as HTMLInputElement;
   const logOutput = document.getElementById("deployLog") as HTMLDivElement;
-  const loadingOverlay = document.getElementById("loadingOverlay") as HTMLDivElement;
 
   const projectName = projectSelect.value;
   const branch = branchSelect.value;
@@ -683,7 +736,7 @@ async function runDeploy() {
 
   // Disable form
   setFormEnabled(false);
-  loadingOverlay.style.display = "flex";
+  resetDeployProgress();
   clearLogContainer(logOutput);
 
   try {
@@ -702,9 +755,11 @@ async function runDeploy() {
       renderLogLines(logOutput, result.logs);
     }
 
-    // Show notification
+    // Decide from the result only: a Cancel click can race with the commit starting
     if (result.success) {
       window.api.showNotification("Deploy Completed", `${projectName} deployed successfully to ${env}`);
+    } else if (result.cancelled) {
+      window.api.showNotification("Deploy Cancelled", `${projectName} deploy was cancelled; the CICD file was restored`);
     } else {
       window.api.showNotification("Deploy Failed", result.error || "Unknown error occurred");
     }
@@ -713,9 +768,7 @@ async function runDeploy() {
     appendLogLine(logOutput, `Error: ${message}`, true);
     window.api.showNotification("Deploy Error", message);
   } finally {
-    loadingOverlay.style.display = "none";
-    const loadingText = document.getElementById("loadingText");
-    if (loadingText) loadingText.textContent = "Deploying...";
+    hideCancelButton();
     setFormEnabled(true);
   }
 }
@@ -784,14 +837,15 @@ function renderProjectsList() {
   }
 
   projectsConfig.projects.forEach((project, index: number) => {
+    const lockAttrs = isProjectDeploying(project.name) ? ' disabled title="Being deployed - wait until the deploy finishes"' : "";
     const card = document.createElement("div");
     card.className = "project-card";
     card.innerHTML = `
       <div class="project-card-header">
         <h3>${escapeHtml(project.name)}</h3>
         <div class="project-card-actions">
-          <button class="btn btn-small edit-btn" data-index="${index}">Edit</button>
-          <button class="btn btn-small btn-danger delete-btn" data-index="${index}">Delete</button>
+          <button class="btn btn-small edit-btn" data-index="${index}"${lockAttrs}>Edit</button>
+          <button class="btn btn-small btn-danger delete-btn" data-index="${index}"${lockAttrs}>Delete</button>
         </div>
       </div>
       <div class="project-card-body">
@@ -853,9 +907,18 @@ function showAddForm() {
   formContainer.scrollIntoView({ behavior: "smooth" });
 }
 
+// A project being deployed (in any window) must not be renamed or deleted: deploys are tracked by project name
+function isProjectDeploying(name: string): boolean {
+  return activeDeployments.includes(name);
+}
+
 function editProject(index: number) {
-  editingProjectIndex = index;
   const project = projectsConfig!.projects[index];
+  if (isProjectDeploying(project.name)) {
+    showToast(`Project "${project.name}" is being deployed; edit it after the deploy finishes`, "warning");
+    return;
+  }
+  editingProjectIndex = index;
   const formContainer = document.getElementById("projectFormContainer") as HTMLDivElement;
   const formTitle = document.getElementById("formTitle") as HTMLHeadingElement;
 
@@ -888,6 +951,10 @@ function editProject(index: number) {
 
 async function deleteProject(index: number) {
   const project = projectsConfig!.projects[index];
+  if (isProjectDeploying(project.name)) {
+    showToast(`Project "${project.name}" is being deployed; delete it after the deploy finishes`, "warning");
+    return;
+  }
   const confirmed = await showConfirmModal({
     title: "Delete project",
     message: `Are you sure you want to delete project "${project.name}"?`,
@@ -904,6 +971,11 @@ async function deleteProject(index: number) {
   if (!cfg || currentIndex === -1) {
     showToast(`Project "${project.name}" no longer exists`, "warning");
     renderProjectsList();
+    return;
+  }
+  if (isProjectDeploying(project.name)) {
+    // A deploy of this project started while the confirmation was open
+    showToast(`Project "${project.name}" is being deployed; delete it after the deploy finishes`, "warning");
     return;
   }
 
@@ -999,6 +1071,14 @@ async function saveProject() {
     smartAppend: smartAppendCheck,
   };
 
+  if (editingProjectIndex !== null) {
+    const edited = projectsConfig.projects[editingProjectIndex];
+    if (edited && isProjectDeploying(edited.name)) {
+      showToast(`Project "${edited.name}" is being deployed; save your changes after the deploy finishes`, "warning");
+      return;
+    }
+  }
+
   if (projectsConfig.projects.some((p, i: number) => p.name === name && i !== editingProjectIndex)) {
     showToast(`Project with name "${name}" already exists`, "warning");
     return;
@@ -1079,6 +1159,8 @@ async function saveProjectsConfig(): Promise<boolean> {
       showToast(`Failed to save config: ${result.error}`, "error");
       return false;
     }
+    // Saving does not notify this window; the Deploy page keeps its old config until the running deploy ends
+    if (isDeploying) pendingConfigRefresh = true;
     return true;
   } catch (err: unknown) {
     showToast(`Error saving config: ${(err as Error).message}`, "error");

@@ -130,6 +130,22 @@
           </div>
         </div>
 
+        <!-- Deploy progress (shown while/after a deploy runs) -->
+        <div id="deployProgress" class="deploy-progress" style="display: none;" aria-live="polite">
+          <ol class="deploy-steps">
+            <li class="deploy-step" data-step="stash" data-status="pending"><span class="step-dot"></span><span class="step-label">Stash</span></li>
+            <li class="deploy-step" data-step="checkout" data-status="pending"><span class="step-dot"></span><span class="step-label">Checkout</span></li>
+            <li class="deploy-step" data-step="pull" data-status="pending"><span class="step-dot"></span><span class="step-label">Pull</span></li>
+            <li class="deploy-step" data-step="write" data-status="pending"><span class="step-dot"></span><span class="step-label">Update CICD</span></li>
+            <li class="deploy-step" data-step="commit" data-status="pending"><span class="step-dot"></span><span class="step-label">Commit</span></li>
+            <li class="deploy-step" data-step="push" data-status="pending"><span class="step-dot"></span><span class="step-label">Push</span></li>
+          </ol>
+          <div class="deploy-progress-actions">
+            <button id="cancelDeployBtn" class="btn btn-small btn-danger" style="display: none;">Cancel deploy</button>
+            <span id="cancelDeployHint" class="cancel-hint"></span>
+          </div>
+        </div>
+
         <!-- Deploy Log Output -->
         <div class="log-container">
           <div class="log-header">
@@ -316,10 +332,7 @@
     </div>
   </div>
 
-  <!-- Loading Spinner Overlay -->
-  <div id="loadingOverlay" class="loading-overlay" style="display: none;">
-    <div class="spinner"></div>
-    <p id="loadingText">Deploying...</p>
+<p id="loadingText">Deploying...</p>
   </div>
 
   <!-- Update Available Notification Popup -->

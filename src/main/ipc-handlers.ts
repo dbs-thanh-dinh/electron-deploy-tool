@@ -6,6 +6,7 @@ import { DeployService, DeployOptions } from './deploy-service';
 import { ConfigI } from './interface';
 import { applyProjectDefaults, saveConfigToFile } from './config-utils';
 import { getRemoteBranches } from './branch-utils';
+import { RunningDeploys } from './running-deploys';
 
 interface ConfirmDialogOptionsI {
   title: string;
@@ -120,6 +121,8 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     return windowManager.getActiveDeployments();
   });
 
+  const runningDeploys = new RunningDeploys();
+
   // Start deployment
   ipcMain.handle('start-deploy', async (event, options: DeployOptions) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -127,7 +130,15 @@ export function registerIpcHandlers(windowManager: WindowManager) {
       return { success: false, error: 'Window not found' };
     }
 
+    const senderId = event.sender.id;
+    // E.g. the renderer was reloaded (Ctrl+R) mid-deploy: its log/steps would mix with a second deploy
+    const running = runningDeploys.start(senderId);
+    if (!running) {
+      return { success: false, error: 'This window already has a deploy running' };
+    }
+
     if (!windowManager.canDeploy(options.project.name, win.id)) {
+      runningDeploys.finish(senderId, running);
       return { 
         success: false, 
         error: `Project ${options.project.name} is already being deployed in another window` 
@@ -135,17 +146,31 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     }
 
     windowManager.setDeploymentActive(options.project.name, win.id);
-    
+
     try {
-      // Stream each log line to the window that started the deploy only
-      const result = await deployService.deploy(options, (line) => {
-        if (!event.sender.isDestroyed()) event.sender.send('deploy-log', line);
-      });
+      // Stream each log line and step change to the window that started the deploy only
+      const result = await deployService.deploy(
+        options,
+        (line) => {
+          if (!event.sender.isDestroyed()) event.sender.send('deploy-log', line);
+        },
+        {
+          signal: running.controller.signal,
+          onStep: (stepEvent) => {
+            runningDeploys.noteStep(running, stepEvent);
+            if (!event.sender.isDestroyed()) event.sender.send('deploy-step', stepEvent);
+          },
+        },
+      );
       return result;
     } finally {
+      runningDeploys.finish(senderId, running);
       windowManager.setDeploymentInactive(options.project.name);
     }
   });
+
+  // Cancel this window's deploy. Resolves false when there is nothing to cancel or it is too late (commit started).
+  ipcMain.handle('cancel-deploy', async (event) => runningDeploys.cancel(event.sender.id));
 
   // Get log directory
   ipcMain.handle('get-log-dir', async () => {

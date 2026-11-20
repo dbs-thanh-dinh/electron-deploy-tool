@@ -5,6 +5,7 @@ type ProjectI = import('../main/interface').ProjectI;
 type ConfigI = import('../main/interface').ConfigI;
 type DeployOptions = import('../main/deploy-service').DeployOptions;
 type BranchesResultI = import('../main/branch-utils').BranchesResultI;
+type DeployStepEventI = import('../main/deploy-steps').DeployStepEventI;
 // start-deploy can fail before running (e.g. duplicate deploy), in which case there are no logs
 type StartDeployResult = Omit<import('../main/deploy-service').DeployResult, 'logs'> & { logs?: string[] };
 
@@ -43,7 +44,9 @@ interface Window {
     canDeploy: (projectName: string) => Promise<boolean>;
     getActiveDeployments: () => Promise<string[]>;
     startDeploy: (options: DeployOptions) => Promise<StartDeployResult>;
-    
+    // Resolves false when there is nothing to cancel or it is too late (the commit already started)
+    cancelDeploy: () => Promise<boolean>;
+
     // Log operations
     getLogDir: () => Promise<string>;
     getLogFiles: () => Promise<string[]>;
@@ -59,6 +62,7 @@ interface Window {
     // Event listeners
     onDeploymentStatusChanged: (callback: (activeProjects: string[]) => void) => void;
     onDeployLog: (callback: (line: string) => void) => void;
+    onDeployStep: (callback: (event: DeployStepEventI) => void) => void;
     onConfigUpdated: (callback: () => void) => void;
     onShowAbout: (callback: () => void) => void;
 

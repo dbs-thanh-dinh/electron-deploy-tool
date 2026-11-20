@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 // `import type` is erased at compile time (preload runs sandboxed and cannot require main-process modules)
 import type { ConfigI } from '../main/interface';
 import type { DeployOptions } from '../main/deploy-service';
+import type { DeployStepEventI } from '../main/deploy-steps';
 
 interface UpdateInfoI {
   version?: string;
@@ -35,7 +36,8 @@ contextBridge.exposeInMainWorld('api', {
   canDeploy: (projectName: string) => ipcRenderer.invoke('can-deploy', projectName),
   getActiveDeployments: () => ipcRenderer.invoke('get-active-deployments'),
   startDeploy: (options: DeployOptions) => ipcRenderer.invoke('start-deploy', options),
-  
+  cancelDeploy: () => ipcRenderer.invoke('cancel-deploy'),
+
   // Log operations
   getLogDir: () => ipcRenderer.invoke('get-log-dir'),
   getLogFiles: () => ipcRenderer.invoke('get-log-files'),
@@ -60,6 +62,12 @@ contextBridge.exposeInMainWorld('api', {
   onDeployLog: (callback: (line: string) => void) => {
     ipcRenderer.on('deploy-log', (event, line: string) => {
       callback(line);
+    });
+  },
+
+  onDeployStep: (callback: (event: DeployStepEventI) => void) => {
+    ipcRenderer.on('deploy-step', (_event, stepEvent: DeployStepEventI) => {
+      callback(stepEvent);
     });
   },
 

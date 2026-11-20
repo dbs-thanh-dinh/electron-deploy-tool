@@ -8,6 +8,7 @@
 - **Quản lý project**: thêm, sửa, xoá project ngay trong ứng dụng.
 - **Log deploy realtime**: hiển thị từng dòng output các lệnh git ngay khi chạy, tô màu theo mức (lỗi, cảnh báo, thành công, lệnh), có nút **Copy**; đồng thời lưu vào file log theo ngày (tự xoá file cũ hơn 90 ngày).
 - **Lịch sử deploy**: xem lại log theo ngày, cùng cách tô màu.
+- **Tiến trình theo bước và huỷ deploy**: thanh bước (Stash → Checkout → Pull → Update CICD → Commit → Push) hiện trạng thái từng bước; không còn lớp phủ chặn màn hình nên vẫn dùng được sidebar. Nút **Cancel deploy** dừng deploy ở ranh giới giữa các bước (và ngắt ngay `git pull` đang treo), khôi phục file CI/CD. Từ khi bước Commit bắt đầu thì không huỷ được nữa.
 - **Dry-run**: chạy thử toàn bộ quy trình nhưng không push (có badge **DRY RUN** cạnh nút Deploy).
 - **Cảnh báo nhánh nhạy cảm**: hộp thoại xác nhận nhắc thêm khi deploy lên `main`, `master`, `stage`, `staging`, `prod`, `production`.
 - **Thông báo hệ thống** khi deploy xong.
@@ -106,6 +107,8 @@ Với mỗi lần deploy, tool chạy tuần tự trong `repoPath`:
 6. `git commit -m "<commitTemplate>"`
 7. `git push` (bỏ qua nếu bật **Dry Run**)
 
+Bạn có thể huỷ trước bước 6: tool dừng ở ranh giới giữa các bước (riêng `git pull` bị ngắt ngay), rollback file CI/CD nếu đã ghi, và để nguyên mọi thứ stash trước đó (không `stash pop`). Project đang deploy bị khoá Edit/Delete trong trang Projects.
+
 Bất kỳ bước nào lỗi thì quy trình dừng lại và log ghi rõ lỗi. Nếu lỗi xảy ra sau khi đã ghi file CI/CD và trước khi commit thành công, tool cố gắng khôi phục file về `HEAD`. Nếu commit đã tạo nhưng push lỗi, repo không bị đụng thêm: commit vẫn nằm ở local và log nói rõ điều đó (Dry Run cũng để lại commit local).
 
 > ⚠️ **Lưu ý**: tool tự `git stash` các thay đổi chưa commit trong repo và **không** `stash pop` lại. Nếu bạn đang làm dở, hãy dùng `git stash list` / `git stash pop` để lấy lại sau khi deploy. Nên commit trước khi dùng tool.
@@ -117,7 +120,7 @@ Bất kỳ bước nào lỗi thì quy trình dừng lại và log ghi rõ lỗi
 2. Chọn nhánh (danh sách tải từ remote của repo; có ô lọc nhanh).
 3. Chọn môi trường và loại deploy; có thể chỉnh nhanh Commit format / File content format.
 4. Tick **Dry Run** nếu chỉ muốn chạy thử, không push.
-5. Bấm **Start Deploy**, xác nhận trong hộp thoại và theo dõi **Deploy Log** (dùng **Copy** để sao chép, **Clear** để xoá).
+5. Bấm **Start Deploy**, xác nhận trong hộp thoại và theo dõi thanh bước cùng **Deploy Log** (dùng **Copy** để sao chép, **Clear** để xoá). Bấm **Cancel deploy** để huỷ trước khi bước Commit bắt đầu.
 
 ### Trang Projects
 - **+ Add Project** để thêm; chọn một project trong danh sách để sửa hoặc xoá (có hộp thoại xác nhận khi xoá).
@@ -184,6 +187,8 @@ electron-deploy-tool/
 │   │   ├── branch-utils.ts         # Lấy danh sách branch remote
 │   │   ├── config-utils.ts         # Đọc/validate/ghi atomic scripts.json
 │   │   ├── log-utils.ts            # Xoá log quá hạn
+│   │   ├── deploy-steps.ts         # Kiểu/hằng các bước deploy, lỗi huỷ
+│   │   ├── running-deploys.ts      # Theo dõi deploy từng cửa sổ để huỷ
 │   │   ├── ipc-handlers.ts         # Các handler IPC
 │   │   └── interface.ts            # Kiểu dữ liệu ProjectI, ConfigI
 │   ├── preload/
