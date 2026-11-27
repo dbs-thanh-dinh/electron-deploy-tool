@@ -55,7 +55,7 @@ npm install
 npm run build      # tsc + copy-static (copy html/css từ src/renderer sang dist)
 npm start          # build rồi chạy electron .
 npm run watch      # tsc --watch (HTML/CSS không được copy lại — chạy copy-static khi đổi)
-npm run dist       # build + electron-builder --win msi --x64 -> output ở release/
+npm run dist       # build + electron-builder --win nsis msi --x64 -> output ở release/ (NSIS cần cho auto-update: latest.yml)
 npm run typecheck  # tsc --noEmit (src) + tsc --noEmit -p tsconfig.test.json (tests)
 npm test           # vitest run
 npm run lint       # eslint src tests (cảnh báo `no-explicit-any`/unused là warn, chỉ lỗi mới làm fail)

@@ -11,7 +11,7 @@
     "test": "vitest run",
     "lint": "eslint src tests",
     "start": "npm run build && electron .",
-    "dist": "npm run build && electron-builder --win msi --x64"
+    "dist": "npm run build && electron-builder --win nsis msi --x64"
   },
   "keywords": [
     "electron",
@@ -64,7 +64,6 @@
         "nsis"
       ],
       "icon": "assets/icon.ico",
-      "publisherName": "CN=ThanhDC",
       "legalTrademarks": "Deploy Tool © ThanhDC"
     },
     "msi": {
