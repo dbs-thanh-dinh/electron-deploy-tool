@@ -1,6 +1,6 @@
 {
   "name": "deploy-tool",
-  "version": "1.3.0",
+  "version": "1.4.0-beta.1",
   "description": "Git Deploy Tool with Electron GUI",
   "main": "dist/main/main.js",
   "scripts": {
