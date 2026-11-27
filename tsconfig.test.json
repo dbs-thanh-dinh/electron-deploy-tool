@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["tests/**/*", "src/main/deploy-utils.ts", "src/main/config-utils.ts", "src/main/branch-utils.ts", "src/main/log-utils.ts", "src/main/update-utils.ts", "src/main/update-controller.ts"]
+}

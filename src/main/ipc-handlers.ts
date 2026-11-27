@@ -4,8 +4,15 @@ import path from 'node:path';
 import { WindowManager } from './window-manager';
 import { DeployService, DeployOptions } from './deploy-service';
 import { ConfigI } from './interface';
-import { autoUpdater } from 'electron-updater';
+import { applyProjectDefaults, saveConfigToFile } from './config-utils';
+import { getRemoteBranches } from './branch-utils';
+import { RunningDeploys } from './running-deploys';
 
+interface ConfirmDialogOptionsI {
+  title: string;
+  message: string;
+  detail?: string;
+}
 const deployService = new DeployService();
 const userDataPath = app.getPath('userData');
 
@@ -26,6 +33,24 @@ const configDefault = {
   ]
 };
 
+// Get app version from package.json
+function getAppVersion(): string {
+  try {
+    const packagePath = app.isPackaged
+      ? path.join(process.resourcesPath, 'app.asar', 'package.json')
+      : path.join(__dirname, '../../package.json');
+    
+    if (fs.existsSync(packagePath)) {
+      const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+      return packageJson.version || '1.0.0';
+    }
+  } catch (err) {
+    console.error('Failed to read version:', err);
+  }
+  return '1.0.0';
+}
+
+
 function getExtraFilePath(filename: string): string {
   const basePath = app.isPackaged
     ? path.join(process.resourcesPath, "extra")
@@ -45,15 +70,11 @@ function getScriptsPath(): string {
 }
 
 export function registerIpcHandlers(windowManager: WindowManager) {
-  ipcMain.handle('check-for-updates', async () => {
-    try {
-      const result = await autoUpdater.checkForUpdates();
-      return { success: true, data: result };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
+  // Get app version
+  ipcMain.handle('get-app-version', async () => {
+    return getAppVersion();
   });
-  
+
   // Load configuration
   ipcMain.handle('load-config', async () => {
     try {
@@ -61,44 +82,31 @@ export function registerIpcHandlers(windowManager: WindowManager) {
       if (!fs.existsSync(scriptsPath)) {
         const scriptsSamplePath = getExtraFilePath('scripts.json');
         if (fs.existsSync(scriptsSamplePath)) {
-          const configSample = fs.readFileSync(scriptsSamplePath, 'utf8');
-          fs.writeFileSync(scriptsPath, configSample);
+          fs.copyFileSync(scriptsSamplePath, scriptsPath);
           console.log('Sample scripts.json copied to user data directory', scriptsSamplePath);
-          return scriptsPath;
         } else {
           console.warn('Sample scripts.json not found, using default config');
+          fs.writeFileSync(scriptsPath, JSON.stringify(configDefault, null, 2), 'utf8');
         }
-        fs.writeFileSync(scriptsPath, JSON.stringify(configDefault, null, 2), 'utf8');
-        return configDefault;
       }
       const config = fs.readFileSync(scriptsPath, 'utf8');
       const scripts: ConfigI = JSON.parse(config);
-      scripts.projects = (scripts.projects || [])
-        .map((project) => {
-          if (!project.branchFilter) project.branchFilter = '';
-          if (!project.commitFormat) project.commitFormat = 'v1';
-          if (!project.commitTemplate) project.commitTemplate = 'deploy: {env}, {type}';
-          if (!project.fileContentFormat) project.fileContentFormat = 'default';
-          if (!project.fileContentTemplate) project.fileContentTemplate = project.commitTemplate;
-          return project;
-        });
+      scripts.projects = (scripts.projects || []).map(applyProjectDefaults);
       return scripts;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error loading config:', err);
-      return { error: err.message };
+      return { error: (err as Error).message };
     }
   });
 
   // Save configuration
-  ipcMain.handle('save-config', async (event, config) => {
-    try {
-      const scriptsPath = getScriptsPath();
-      fs.writeFileSync(scriptsPath, JSON.stringify(config, null, 2), 'utf8');
-      windowManager.broadcastConfigUpdate();
-      return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err.message };
+  ipcMain.handle('save-config', async (event, config: unknown) => {
+    const result = await saveConfigToFile(getScriptsPath(), config);
+    // Only tell the other windows when the file actually changed
+    if (result.success) {
+      windowManager.broadcastConfigUpdate(event.sender.id);
     }
+    return result;
   });
 
   // Check if can deploy
@@ -113,6 +121,8 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     return windowManager.getActiveDeployments();
   });
 
+  const runningDeploys = new RunningDeploys();
+
   // Start deployment
   ipcMain.handle('start-deploy', async (event, options: DeployOptions) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -120,7 +130,15 @@ export function registerIpcHandlers(windowManager: WindowManager) {
       return { success: false, error: 'Window not found' };
     }
 
+    const senderId = event.sender.id;
+    // E.g. the renderer was reloaded (Ctrl+R) mid-deploy: its log/steps would mix with a second deploy
+    const running = runningDeploys.start(senderId);
+    if (!running) {
+      return { success: false, error: 'This window already has a deploy running' };
+    }
+
     if (!windowManager.canDeploy(options.project.name, win.id)) {
+      runningDeploys.finish(senderId, running);
       return { 
         success: false, 
         error: `Project ${options.project.name} is already being deployed in another window` 
@@ -128,14 +146,31 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     }
 
     windowManager.setDeploymentActive(options.project.name, win.id);
-    
+
     try {
-      const result = await deployService.deploy(options);
+      // Stream each log line and step change to the window that started the deploy only
+      const result = await deployService.deploy(
+        options,
+        (line) => {
+          if (!event.sender.isDestroyed()) event.sender.send('deploy-log', line);
+        },
+        {
+          signal: running.controller.signal,
+          onStep: (stepEvent) => {
+            runningDeploys.noteStep(running, stepEvent);
+            if (!event.sender.isDestroyed()) event.sender.send('deploy-step', stepEvent);
+          },
+        },
+      );
       return result;
     } finally {
+      runningDeploys.finish(senderId, running);
       windowManager.setDeploymentInactive(options.project.name);
     }
   });
+
+  // Cancel this window's deploy. Resolves false when there is nothing to cancel or it is too late (commit started).
+  ipcMain.handle('cancel-deploy', async (event) => runningDeploys.cancel(event.sender.id));
 
   // Get log directory
   ipcMain.handle('get-log-dir', async () => {
@@ -152,35 +187,33 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     return deployService.readLogFile(filename);
   });
 
+  // One in-flight get-branches per window: a newer request or an explicit cancel aborts the older one
+  const branchRequests = new Map<number, AbortController>();
+
+  ipcMain.handle('cancel-get-branches', async (event) => {
+    branchRequests.get(event.sender.id)?.abort();
+  });
+
   // Get branches from git repo
   ipcMain.handle('get-branches', async (event, repoPath: string) => {
+    const senderId = event.sender.id;
+    branchRequests.get(senderId)?.abort();
+    const controller = new AbortController();
+    branchRequests.set(senderId, controller);
+    // Stop the fetch if the window is closed meanwhile
+    const onDestroyed = () => controller.abort();
+    event.sender.once('destroyed', onDestroyed);
+
     try {
-      const { execSync } = require('child_process');
-
-      // Fetch latest branches
-      execSync('git fetch --prune', { cwd: repoPath });
-
-      // Get the list of remote branches
-      const output: string = execSync('git branch -r', { 
-        cwd: repoPath, 
-        encoding: 'utf8' 
-      });
-
-      // Parse branches
-      const branches = output
-        .split('\n')
-        .map(b => b.trim().replace('origin/', ''))
-        .filter(b => b && !b.includes('->'))
-        .sort();
-      
-      return branches;
-    } catch (err: any) {
-      console.error('Error getting branches:', err);
-      return [];
+      // Never throws: problems are reported in `error`, an aborted request yields an empty list
+      return await getRemoteBranches(repoPath, controller.signal);
+    } finally {
+      event.sender.removeListener('destroyed', onDestroyed); // avoid piling up listeners per request
+      if (branchRequests.get(senderId) === controller) branchRequests.delete(senderId);
     }
   });
 
-  ipcMain.handle('open-dialog-confirm', async (event, options: any) => {
+  ipcMain.handle('open-dialog-confirm', async (event, options: ConfirmDialogOptionsI) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
 
@@ -209,5 +242,20 @@ export function registerIpcHandlers(windowManager: WindowManager) {
     }
 
     return result.filePaths[0];
+  });
+
+  ipcMain.handle('load-holidays-config', async () => {
+    try {
+      const holidaysPath = getExtraFilePath('holidays-config.json'); 
+      if (fs.existsSync(holidaysPath)) {
+        const config = fs.readFileSync(holidaysPath, 'utf8');
+        return JSON.parse(config);
+      } else {
+        return { holidays: [] };
+      }
+    } catch (err: unknown) {
+      console.error('Error loading holidays config:', err);
+      return { holidays: [] };
+    }
   });
 }

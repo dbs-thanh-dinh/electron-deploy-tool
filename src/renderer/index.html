@@ -6,6 +6,7 @@
   <title>Deploy Tool</title>
   <link rel="stylesheet" href="styles/themes.css">
   <link rel="stylesheet" href="styles/main.css">
+  <link rel="stylesheet" href="styles/holiday-theme.css">
 </head>
 <body class="dark-theme">
   <div class="app-container">
@@ -40,6 +41,14 @@
           </label>
           <span class="toggle-label">Dark Mode</span>
         </div>
+        
+        <div class="background-toggle">
+          <label class="toggle-switch">
+            <input type="checkbox" id="backgroundToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-label">Background</span>
+        </div>
       </div>
     </aside>
 
@@ -68,6 +77,12 @@
                   <option value="">Select branch...</option>
                 </select>
               </div>
+              <div id="branchLoading" class="branch-loading" style="display: none;">
+                <span class="spinner-sm"></span>
+                <span>Fetching branches...</span>
+                <button type="button" id="cancelBranchesBtn" class="btn btn-small">Cancel</button>
+              </div>
+              <div id="branchError" class="branch-error" style="display: none;"></div>
             </div>
           </div>
 
@@ -96,6 +111,7 @@
               <input type="text" id="fileContentTemplate" class="form-control" placeholder="deploy: {env}, {type}" value="deploy: {env}, {type}" disabled>
             </div>
           </div>
+          <div id="projectOptionsWarning" class="field-warning" style="display: none;"></div>
 
           <div class="form-row">
             <div class="form-group checkbox-group">
@@ -110,6 +126,23 @@
             <button id="deployBtn" class="btn btn-primary" disabled>
               <span class="btn-text">Start Deploy</span>
             </button>
+            <span id="dryRunBadge" class="dry-run-badge" style="display: none;">DRY RUN - no push</span>
+          </div>
+        </div>
+
+        <!-- Deploy progress (shown while/after a deploy runs) -->
+        <div id="deployProgress" class="deploy-progress" style="display: none;" aria-live="polite">
+          <ol class="deploy-steps">
+            <li class="deploy-step" data-step="stash" data-status="pending"><span class="step-dot"></span><span class="step-label">Stash</span></li>
+            <li class="deploy-step" data-step="checkout" data-status="pending"><span class="step-dot"></span><span class="step-label">Checkout</span></li>
+            <li class="deploy-step" data-step="pull" data-status="pending"><span class="step-dot"></span><span class="step-label">Pull</span></li>
+            <li class="deploy-step" data-step="write" data-status="pending"><span class="step-dot"></span><span class="step-label">Update CICD</span></li>
+            <li class="deploy-step" data-step="commit" data-status="pending"><span class="step-dot"></span><span class="step-label">Commit</span></li>
+            <li class="deploy-step" data-step="push" data-status="pending"><span class="step-dot"></span><span class="step-label">Push</span></li>
+          </ol>
+          <div class="deploy-progress-actions">
+            <button id="cancelDeployBtn" class="btn btn-small btn-danger" style="display: none;">Cancel deploy</button>
+            <span id="cancelDeployHint" class="cancel-hint"></span>
           </div>
         </div>
 
@@ -117,7 +150,10 @@
         <div class="log-container">
           <div class="log-header">
             <h3>Deploy Log</h3>
-            <button id="clearLogBtn" class="btn btn-small">Clear</button>
+            <div class="log-header-actions">
+              <button id="copyLogBtn" class="btn btn-small">Copy</button>
+              <button id="clearLogBtn" class="btn btn-small">Clear</button>
+            </div>
           </div>
           <div id="deployLog" class="log-output"></div>
         </div>
@@ -183,6 +219,11 @@
               </div>
 
               <div class="form-group">
+                <label for="projectCICDFileName">CICD file name *</label>
+                <input type="text" id="projectCICDFileName" class="form-control" placeholder="CICD.txt">
+              </div>
+
+              <div class="form-group">
                 <label for="projectFileContentFormat">CICD file content format *</label>
                 <div class="select-with-input">
                   <select id="projectFileContentFormat" class="form-control">
@@ -190,6 +231,14 @@
                     <option value="custom">custom</option>
                   </select>
                   <input type="text" id="projectFileContentTemplate" class="form-control" placeholder="File content format..." value="deploy: {env}, {type}" disabled>
+
+                  <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                      <input type="checkbox" id="projectFileContentSmartAppend">
+                      <span>Smart append (append "+" when message is duplicate)</span>
+                    </label>
+                  </div>
+
                   <div class="note-box">
                     <span>Note:</span>
                     <ul>
@@ -254,7 +303,7 @@
 
           <div class="setting-item">
             <h3>About</h3>
-            <p><strong>Deploy Tool</strong> v1.1.1</p>
+            <p><strong>Deploy Tool</strong> v<span class="app-version">...</span></p>
             <p>Created by Thanhdc</p>
             <p>Electron-based Git deployment automation tool</p>
           </div>
@@ -268,6 +317,97 @@
     </main>
   </div>
 
+  <!-- Toasts -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <!-- Confirm Modal -->
+  <div id="confirmModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle" aria-describedby="confirmModalMessage">
+      <h3 id="confirmModalTitle"></h3>
+      <p id="confirmModalMessage"></p>
+      <div class="modal-actions">
+        <button id="confirmModalCancel" class="btn btn-small">Cancel</button>
+        <button id="confirmModalOk" class="btn btn-primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+<p id="loadingText">Deploying...</p>
+  </div>
+
+  <!-- Update Available Notification Popup -->
+  <div id="updateAvailablePopup" class="update-notification-popup" style="display: none;">
+    <div class="update-notification-content">
+      <div class="update-notification-icon">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 6V12L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      
+      <div class="update-notification-body">
+        <h3 class="update-notification-title">🎉 Phiên bản mới đã được phát hành!</h3>
+
+        <div id="updateReleaseNotes" class="update-release-notes" style="display: none;">
+          <h4>📋 Nội dung cập nhật:</h4>
+          <div id="releaseNotesContent" class="release-notes-content">
+            <!-- Release notes sẽ được load vào đây -->
+          </div>
+        </div>
+        
+        <div class="update-version-info">
+          <div class="version-badge current">
+            <span class="version-label">Hiện tại</span>
+            <span class="version-number app-version">...</span>
+          </div>
+          <div class="version-arrow">→</div>
+          <div class="version-badge new">
+            <span class="version-label">Mới nhất</span>
+            <span class="version-number" id="latestVersionText">-</span>
+          </div>
+        </div>
+
+        <!-- GitHub Release Link -->
+        <div class="github-release-link-container">
+          <a id="githubReleaseLink" href="#" target="_blank" class="github-release-link" style="display: none;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+            </svg>
+            <span>
+              Xem trên GitHub Release
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="external-icon">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <line x1="10" y1="14" x2="21" y2="3"></line>
+              </svg>
+            </span>
+          </a>
+        </div>
+      </div>
+      
+      <div class="update-notification-actions">
+        <button id="downloadNowBtn" class="btn-update btn-primary-update">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          Tải xuống ngay
+        </button>
+        <button id="remindLaterBtn" class="btn-update btn-secondary-update">
+          <span>Để sau</span>
+        </button>
+        <button id="viewReleaseNotesBtn" class="btn-link-update">
+          <span>Ẩn chi tiết ↑</span>
+        </button>
+      </div>
+      
+      <button id="closeUpdatePopupBtn" class="close-update-popup">×</button>
+    </div>
+  </div>
+
+
+  <!-- TypeScript compiled to JavaScript -->
   <div id="updateModal" class="update-modal" style="display: none;">
     <div class="update-modal-content">
       <div class="update-modal-header">
@@ -328,13 +468,7 @@
     </div>
   </div>
 
-  <!-- Loading Spinner Overlay -->
-  <div id="loadingOverlay" class="loading-overlay" style="display: none;">
-    <div class="spinner"></div>
-    <p>Deploying...</p>
-  </div>
-
-  <!-- TypeScript compiled to JavaScript -->
   <script src="../../dist/renderer/scripts/renderer.js"></script>
+  <script src="../../dist/renderer/scripts/holiday-theme-manager.js"></script>
 </body>
 </html>

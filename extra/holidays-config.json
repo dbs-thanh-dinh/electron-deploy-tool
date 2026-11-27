@@ -1,0 +1,147 @@
+{
+  "holidays": [
+    {
+      "id": "new-year",
+      "name": "Tết Dương Lịch",
+      "type": "solar",
+      "date": "1/1",
+      "daysBefore": 7,
+      "daysAfter": 7,
+      "theme": {
+        "backgroundImage": "./../../assets/holidays/new-year-background.png",
+        "animations": ["fireworks", "stars"]
+      },
+      "enabled": true
+    },
+    {
+      "id": "tet",
+      "name": "Tết Nguyên đán",
+      "type": "lunar",
+      "date": "1/1",
+      "daysBefore": 7,
+      "daysAfter": 7,
+      "theme": {
+        "backgroundImage": "./../../assets/holidays/tet-background.jpg",
+        "animations": ["peach-blossom", "fireworks"]
+      },
+      "enabled": true
+    },
+    {
+      "id": "women-day",
+      "name": "Ngày Quốc tế Phụ nữ",
+      "type": "solar",
+      "date": "3/8",
+      "daysBefore": 3,
+      "daysAfter": 1,
+      "theme": {
+        "backgroundImage": "./../../assets/holidays/women-day-background.png",
+        "animations": ["flowers"]
+      },
+      "enabled": true
+    },
+    {
+      "id": "hung-kings",
+      "name": "Giỗ Tổ Hùng Vương",
+      "type": "lunar",
+      "date": "3/10",
+      "daysBefore": 3,
+      "daysAfter": 1,
+      "theme": {
+        "backgroundImage": "./../../assets/holidays/hung-kings-background.png",
+        "animations": ["incense"]
+      },
+      "enabled": true
+    },
+    {
+      "id": "liberation-day",
+      "name": "Ngày Giải phóng miền Nam",
+      "type": "solar",
+      "date": "4/30",
+      "daysBefore": 3,
+      "daysAfter": 0,
+      "theme": {
+        "backgroundImage": "./../../assets/holidays/liberation-day-background.png",
+        "animations": ["flags", "fireworks"]
+      },
+      "enabled": true
+    },
+    {
+      "id": "labor-day",
+      "name": "Ngày Quốc tế Lao động",
+      "type": "solar",
+      "date": "5/1",
+      "daysBefore": 3,
+      "daysAfter": 1,
+      "theme": {
+        "backgroundImage": "./../../assets/holidays/labor-day-background.png",
+        "animations": ["stars"]
+      },
+      "enabled": true
+    },
+    {
+      "id": "mid-autumn",
+      "name": "Tết Trung Thu",
+      "type": "lunar",
+      "date": "8/15",
+      "daysBefore": 3,
+      "daysAfter": 1,
+      "theme": {
+        "backgroundImage": "./../../assets/holidays/mid-autumn-background.png",
+        "animations": ["lanterns", "moon", "stars"]
+      },
+      "enabled": true
+    },
+    {
+      "id": "national-day",
+      "name": "Quốc Khánh",
+      "type": "solar",
+      "date": "9/2",
+      "daysBefore": 7,
+      "daysAfter": 1,
+      "theme": {
+        "backgroundImage": "./../../assets/holidays/national-day-background.png",
+        "animations": ["flags", "fireworks"]
+      },
+      "enabled": true
+    },
+    {
+      "id": "women-vietnam-day",
+      "name": "Ngày Phụ nữ Việt Nam",
+      "type": "solar",
+      "date": "10/20",
+      "daysBefore": 3,
+      "daysAfter": 1,
+      "theme": {
+        "backgroundImage": "./../../assets/holidays/women-vietnam-day-background.png",
+        "animations": ["flowers"]
+      },
+      "enabled": true
+    },
+    {
+      "id": "teacher-day",
+      "name": "Ngày Nhà giáo Việt Nam",
+      "type": "solar",
+      "date": "11/20",
+      "daysBefore": 3,
+      "daysAfter": 1,
+      "theme": {
+        "backgroundImage": "./../../assets/holidays/teacher-day-background.png",
+        "animations": ["books"]
+      },
+      "enabled": true
+    },
+    {
+      "id": "christmas",
+      "name": "Giáng Sinh",
+      "type": "solar",
+      "date": "12/25",
+      "daysBefore": 3,
+      "daysAfter": 2,
+      "theme": {
+        "backgroundImage": "./../../assets/holidays/christmas-background.png",
+        "animations": ["snow", "christmas-tree"]
+      },
+      "enabled": true
+    }
+  ]
+}

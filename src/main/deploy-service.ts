@@ -1,8 +1,17 @@
-import { execSync } from 'node:child_process';
+import { execFile, ChildProcess } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { ProjectI } from './interface';
+import { pruneOldLogs } from './log-utils';
+import { DeployCancelledError, DeployStepEventI, DeployStepId, DeployStepStatus } from './deploy-steps';
+import { applyCicdEntry, resolveCicdFile, getCommitMsg, getFileContent, getGitErrorMessage, getLocalDate, getLocalTimestamp } from './deploy-utils';
+
+const execFileAsync = promisify(execFile);
+
+const GIT_TIMEOUT_MS = 5 * 60 * 1000;
+const LOG_RETENTION_DAYS = 90;
 
 export interface DeployOptions {
   project: ProjectI;
@@ -19,26 +28,61 @@ export interface DeployResult {
   success: boolean;
   logs: string[];
   error?: string;
+  /** The user cancelled before the point of no return (the commit); `success` is false and the CICD file was rolled back */
+  cancelled?: boolean;
+}
+
+export interface DeployHooks {
+  /** Called when a step starts / finishes / is skipped / fails / is cancelled */
+  onStep?: (event: DeployStepEventI) => void;
+  /** Aborting stops the deploy at the next step boundary and kills an in-flight `git pull`. Ignored once the commit starts. */
+  signal?: AbortSignal;
+}
+
+/** Kills a process and all of its children. A plain child.kill() on Windows leaves git's sub-processes running. */
+function killProcessTree(child: ChildProcess): void {
+  // Already exited: its PID may have been reused by an unrelated process
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === 'win32') {
+    // If taskkill itself fails, still kill the git process so the deploy cannot hang until the git timeout
+    execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, (err) => {
+      if (err) child.kill();
+    });
+  } else {
+    child.kill('SIGKILL');
+  }
 }
 
 export class DeployService {
-  private readonly cicdFileName = 'CICD.txt';
   private readonly userDataPath = app.getPath('userData');
   private readonly logDir = path.join(this.userDataPath, 'logs');
 
   constructor() {
     fs.mkdirSync(this.logDir, { recursive: true });
+
+    const removed = pruneOldLogs(this.logDir, LOG_RETENTION_DAYS);
+    if (removed.length > 0) {
+      this.log(`Removed ${removed.length} log file(s) older than ${LOG_RETENTION_DAYS} days`, []);
+    }
   }
 
   private getLogFilePath(): string {
-    const date = new Date().toISOString().split('T')[0];
-    return path.join(this.logDir, `deploy-${date}.log`);
+    return path.join(this.logDir, `deploy-${getLocalDate()}.log`);
   }
 
+  // Per-deploy live log listeners, keyed by the deploy's logs array (deploys of different projects can run concurrently)
+  private readonly logListeners = new WeakMap<string[], (line: string) => void>();
+
   private log(msg: string, logs: string[]): void {
-    const time = new Date().toISOString();
-    const line = `[${time}] ${msg}`;
+    const line = `[${getLocalTimestamp()}] ${msg}`;
     logs.push(line);
+
+    // A failing listener (e.g. a closed window) must never break the deploy
+    try {
+      this.logListeners.get(logs)?.(line);
+    } catch (err) {
+      console.error('Log listener failed:', err);
+    }
     
     // Also write to file
     try {
@@ -48,59 +92,119 @@ export class DeployService {
     }
   }
 
-  private runCommand(cmd: string, cwd: string, logs: string[]): boolean {
+  private getGitOptions(cwd: string) {
+    return {
+      cwd,
+      encoding: 'utf8' as const,
+      timeout: GIT_TIMEOUT_MS,
+      windowsHide: true,
+      // Literal pathspecs: a CICD file name like "CICD[1].txt" must not be treated as a glob/magic by add/diff/checkout
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' },
+    };
+  }
+
+  /**
+   * Runs git, logs the command and its output. Returns trimmed stdout, or null when git fails.
+   * With `signal`, aborting kills the whole git process tree, waits for it to exit, then throws DeployCancelledError.
+   */
+  private async runGitOutput(args: string[], cwd: string, logs: string[], signal?: AbortSignal): Promise<string | null> {
+    let onAbort: (() => void) | undefined;
     try {
-      this.log(`$ ${cmd}`, logs);
-      const output = execSync(cmd, { 
-        cwd, 
-        stdio: 'pipe',
-        encoding: 'utf8'
-      }).toString().trim();
-      
+      this.log(`$ git ${args.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`, logs);
+      const pending = execFileAsync('git', args, this.getGitOptions(cwd));
+      if (signal) {
+        onAbort = () => killProcessTree(pending.child);
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      }
+      const { stdout } = await pending;
+
+      const output = stdout.toString().trim();
       if (output) {
         this.log(output, logs);
       }
-      return true;
-    } catch (err: any) {
-      this.log(`❌ Error running: ${cmd}`, logs);
-      const errorMsg = err.stderr?.toString() || err.message;
-      this.log(errorMsg, logs);
+      return output;
+    } catch (err: unknown) {
+      if (signal?.aborted) {
+        // The process has exited (the promise settles on 'close'); a leftover lock means the kill was not clean
+        this.log(`⛔ git ${args[0]} interrupted`, logs);
+        if (fs.existsSync(path.join(cwd, '.git', 'index.lock'))) {
+          this.log('⚠️ .git/index.lock still exists after cancelling; remove it manually if no other git process is running', logs);
+        }
+        throw new DeployCancelledError();
+      }
+      this.log(`❌ Error running: git ${args[0]}`, logs);
+      // String() keeps the original output ("undefined") when the error carries no message
+      this.log(String(getGitErrorMessage(err)), logs);
+      return null;
+    } finally {
+      if (onAbort) signal?.removeEventListener('abort', onAbort);
+    }
+  }
+
+  private async runGit(args: string[], cwd: string, logs: string[], signal?: AbortSignal): Promise<boolean> {
+    return (await this.runGitOutput(args, cwd, logs, signal)) !== null;
+  }
+
+  /** Hash of the newest stash entry ('' when there is none or git fails). Silent: not written to the log. */
+  private async getTopStash(cwd: string): Promise<string> {
+    try {
+      const { stdout } = await execFileAsync('git', ['stash', 'list', '--format=%H', '-1'], this.getGitOptions(cwd));
+      return stdout.toString().trim();
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * `git diff --cached --quiet` exits 1 when there ARE staged changes, which is a normal result
+   * (not an error), so it cannot go through runGit. Any other failure is rethrown.
+   */
+  private async hasStagedChanges(pathspec: string, cwd: string, logs: string[]): Promise<boolean> {
+    this.log(`$ git diff --cached --quiet -- ${pathspec}`, logs);
+    try {
+      await execFileAsync('git', ['diff', '--cached', '--quiet', '--', pathspec], this.getGitOptions(cwd));
       return false;
+    } catch (err: unknown) {
+      if ((err as { code?: unknown }).code === 1) return true;
+      throw err;
     }
   }
 
-  private getCommitMsg(commitTemplate: string, env: string, type: string): string {
-    let commitMessage = commitTemplate;
-    if (type === 'all') {
-      commitMessage = commitMessage.replace(/\{type\}\s*,\s*|\s*,\s*\{type\}/gi, "");
-    }
-
-    return commitMessage
-      .replace('{env}', env)
-      .replace('{type}', type);
+  /** Best-effort: restores the CICD file (index + worktree) to HEAD. Never throws. */
+  private async rollbackCicdFile(pathspec: string, cwd: string, logs: string[]): Promise<void> {
+    this.log(`↩️ Rolling back ${pathspec} to HEAD`, logs);
+    const ok = await this.runGit(['checkout', 'HEAD', '--', pathspec], cwd, logs);
+    this.log(ok ? `✓ Rolled back ${pathspec}` : `⚠️ Rollback failed, please check ${pathspec} manually`, logs);
   }
 
-  private getFileContent(fileContentTemplate: string, env: string, type: string): string {
-    let fileContent = fileContentTemplate;
-    if (type === 'all') {
-      fileContent = fileContent.replace(/\{type\}\s*,\s*|\s*,\s*\{type\}/gi, "");
-    }
-    const now = new Date();
-    const dateDMY = `${now.getDate()}-${now.getMonth() + 1}-${now.getFullYear()}`
-    const dateYMD = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`
-    return fileContent
-      .replace('{date:y-m-d}', dateYMD)
-      .replace('{date:y/m/d}', dateYMD)
-      .replace('{date:d-m-y}', dateDMY)
-      .replace('{date:d/m/y}', dateDMY)
-      .replace('{env}', env)
-      .replace('{type}', type);
-  }
-
-  async deploy(options: DeployOptions): Promise<DeployResult> {
+  /** `onLog` receives every log line as soon as it is written (the full list is still returned at the end). */
+  async deploy(options: DeployOptions, onLog?: (line: string) => void, hooks: DeployHooks = {}): Promise<DeployResult> {
     const logs: string[] = [];
+    if (onLog) this.logListeners.set(logs, onLog);
+    const { signal } = hooks;
+    let currentStep: DeployStepId | null = null;
+    const emit = (step: DeployStepId, status: DeployStepStatus) => {
+      // Like the log listener: a failing UI callback must never break the deploy
+      try {
+        hooks.onStep?.({ step, status });
+      } catch (err) {
+        console.error('Step listener failed:', err);
+      }
+    };
+    const begin = (step: DeployStepId, cancellable = true) => {
+      currentStep = step;
+      if (cancellable && signal?.aborted) throw new DeployCancelledError();
+      emit(step, 'running');
+    };
+    const finish = (status: DeployStepStatus = 'done') => {
+      if (currentStep) emit(currentStep, status);
+    };
     const { project, branch, env, type, dryRun, commitTemplate, fileContentTemplate } = options;
     const repoPath = project.repoPath;
+    let cicdPathspec: string | null = null;
+    let cicdWritten = false;
+    let committed = false;
 
     try {
       this.log('=========================================================', logs);
@@ -117,79 +221,129 @@ export class DeployService {
         throw new Error(`Repository path does not exist: ${repoPath}`);
       }
 
+      if (!branch || branch.startsWith('-')) {
+        throw new Error(`Invalid branch name: ${branch}`);
+      }
+      const cicdFile = resolveCicdFile(repoPath, project.cicdFileName);
+      if (!cicdFile) {
+        throw new Error(`Invalid CICD file name: ${project.cicdFileName}`);
+      }
+
+      // Same pathspec (forward slashes) for add / diff / checkout
+      cicdPathspec = cicdFile.pathspec;
+
       // Git operations
-      if (!this.runCommand('git stash save "Auto stash before deploy"', repoPath, logs)) {
+      begin('stash');
+      const stashBefore = await this.getTopStash(repoPath);
+      if (!(await this.runGit(['stash', 'save', 'Auto stash before deploy'], repoPath, logs))) {
         throw new Error('Git stash failed');
       }
+      // Log-only warning: the stash is intentionally never popped (documented behavior).
+      // Compare the top stash hash instead of parsing git's (localizable) output.
+      const stashAfter = await this.getTopStash(repoPath);
+      if (stashAfter && stashAfter !== stashBefore) {
+        this.log('⚠ Local changes were stashed and NOT restored. Run `git stash pop` in the repo to get them back.', logs);
+      }
+      finish();
 
-      const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: repoPath, encoding: 'utf8' }).toString().trim();
-      if (currentBranch == branch) {
+      begin('checkout');
+
+      const currentBranch = await this.runGitOutput(['rev-parse', '--abbrev-ref', 'HEAD'], repoPath, logs);
+      if (currentBranch === null) {
+        throw new Error('Git rev-parse failed');
+      }
+      if (currentBranch === branch) {
         this.log(`Current branch: ${currentBranch}`, logs);
-      } else if (!this.runCommand(`git checkout ${branch}`, repoPath, logs)) {
+        finish('skipped');
+      } else if (!(await this.runGit(['checkout', branch], repoPath, logs))) {
         throw new Error('Git checkout failed');
+      } else {
+        finish();
       }
 
-      if (!this.runCommand('git pull', repoPath, logs)) {
+      // --ff-only: never create a merge commit or leave the repo in a conflicted state.
+      // Only the pull may be killed mid-run (the signal is not passed to any other git command).
+      begin('pull');
+      if (!(await this.runGit(['pull', '--ff-only'], repoPath, logs, signal))) {
+        this.log('ℹ️ Pull failed. Common causes: the local branch cannot fast-forward (e.g. unpushed local commits from a previous deploy or dry-run), no upstream branch, or a network/auth problem.', logs);
         throw new Error('Git pull failed');
       }
+      finish();
 
       // Update CICD.txt
-      const cicdFileContent = this.getFileContent(fileContentTemplate, env, type);
-      this.updateCICDFile(repoPath, cicdFileContent);
-      this.log(`✓ Added to ${this.cicdFileName}: ${cicdFileContent}`, logs);
+      begin('write');
+      const cicdFileContent = getFileContent(fileContentTemplate, env, type);
+      this.updateCICDFile(logs, project, cicdFileContent);
+      cicdWritten = true;
       
       // Commit
-      if (!this.runCommand(`git add ${this.cicdFileName}`, repoPath, logs)) {
+      if (!(await this.runGit(['add', '--', cicdPathspec], repoPath, logs))) {
         throw new Error('Git add failed');
       }
+
+      if (!(await this.hasStagedChanges(cicdPathspec, repoPath, logs))) {
+        throw new Error(`Nothing to commit: ${cicdPathspec} has no changes`);
+      }
+      finish();
       
-      const commitMsg = this.getCommitMsg(commitTemplate, env, type);
-      if (!this.runCommand(`git commit -m "${commitMsg}"`, repoPath, logs)) {
+      // Last chance to cancel (rolls the CICD file back); from here on the commit and push always run to the end
+      begin('commit');
+      const commitMsg = getCommitMsg(commitTemplate, env, type);
+      if (!(await this.runGit(['commit', '-m', commitMsg], repoPath, logs))) {
         throw new Error('Git commit failed');
       }
+      committed = true;
+      finish();
 
       // Push (if not dry-run)
       if (dryRun) {
+        currentStep = 'push';
+        finish('skipped');
         this.log('DRY-RUN: Skipping push step', logs);
         this.log('✅ SUCCESS: Dry-run completed (no push)', logs);
       } else {
-        if (!this.runCommand('git push', repoPath, logs)) {
+        begin('push', false);
+        if (!(await this.runGit(['push'], repoPath, logs))) {
+          this.log('ℹ️ The commit was created locally but NOT pushed. Fix the push problem and push manually, or the next deploy will need to fast-forward.', logs);
           throw new Error('Git push failed');
         }
+        finish();
         this.log('✅ SUCCESS: Deploy completed!', logs);
       }
 
       return { success: true, logs };
-    } catch (err: any) {
-      this.log(`❌ Deploy failed: ${err.message}`, logs);
-      return { success: false, logs, error: err.message };
+    } catch (err: unknown) {
+      const cancelled = err instanceof DeployCancelledError;
+      const message = (err as Error).message;
+      this.log(cancelled ? `⛔ ${message}` : `❌ Deploy failed: ${message}`, logs);
+      finish(cancelled ? 'cancelled' : 'failed');
+      // Only roll back while nothing was committed; a created commit is left untouched
+      if (cicdWritten && !committed && cicdPathspec) {
+        await this.rollbackCicdFile(cicdPathspec, repoPath, logs);
+      }
+      return cancelled ? { success: false, logs, error: message, cancelled: true } : { success: false, logs, error: message };
     } finally {
       this.log('', logs);
     }
   }
 
-  updateCICDFile(repoPath: string, commitMsg: string) {
-    const cicdPath = path.join(repoPath, this.cicdFileName);
+  updateCICDFile(logs: string[], project: ProjectI, commitMsg: string) {
+    // Same resolution as the validation in deploy()
+    const cicdPath = resolveCicdFile(project.repoPath, project.cicdFileName)?.absolutePath;
+    if (!cicdPath) {
+      throw new Error(`Invalid CICD file name: ${project.cicdFileName}`);
+    }
     if (!fs.existsSync(cicdPath)) {
-      throw new Error(`${this.cicdFileName} does not exist in repo`);
+      throw new Error(`${project.cicdFileName} does not exist in repo`);
     }
     const content = fs.readFileSync(cicdPath, 'utf8');
-    const lines = content.split(/\r?\n/);
-
-    // File empty
-    if (lines.length === 1 && lines[0] === '') {
-      fs.writeFileSync(cicdPath, commitMsg);
-    } else {
-      const lastLine = lines.at(-1) as string;
-      if (lastLine.trim() === '') {
-        // Nếu dòng cuối là dòng trống → thêm ngay phía trên dòng trống đó
-        lines.splice(-1, 0, commitMsg);
-      } else {
-        // Nếu dòng cuối có nội dung → thêm dòng mới ở cuối file
-        lines.push(commitMsg);
-      }
-      fs.writeFileSync(cicdPath, lines.join('\n'));
+    const result = applyCicdEntry(content, commitMsg, project.smartAppend);
+    if (result.action === 'added') {
+      this.log(`✓ Added to ${project.cicdFileName}: ${commitMsg}`, logs);
+    } else if (result.action === 'appended') {
+      this.log(`✓ Appended "+" to existing entry in ${project.cicdFileName}: "${result.previousLine}" -> "${result.newLine}"`, logs);
     }
+    fs.writeFileSync(cicdPath, result.content);
   }
 
   getLogDir(): string {
@@ -210,7 +364,11 @@ export class DeployService {
 
   readLogFile(filename: string): string {
     try {
-      const filePath = path.join(this.logDir, filename);
+      const safeName = path.basename(filename);
+      if (safeName !== filename || !safeName.startsWith('deploy-') || !safeName.endsWith('.log')) {
+        return 'Error reading log file: invalid file name';
+      }
+      const filePath = path.join(this.logDir, safeName);
       return fs.readFileSync(filePath, 'utf8');
     } catch (err) {
       return `Error reading log file: ${err}`;

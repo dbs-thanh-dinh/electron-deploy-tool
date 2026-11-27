@@ -1,11 +1,15 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Notification } from 'electron';
 import { WindowManager } from './window-manager';
 import { registerIpcHandlers } from './ipc-handlers';
 import path from 'node:path';
+import fs from 'node:fs';
 import { autoUpdater } from 'electron-updater';
+import log from 'electron-log/main';
+import { UpdateController } from './update-controller';
 
 let windowManager: WindowManager;
-let mainWindow: BrowserWindow | null = null;
+let updateCheckTimer: NodeJS.Timeout | undefined;
+let updateController: UpdateController;
 
 function createMenu() {
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -55,95 +59,77 @@ function createMenu() {
   Menu.setApplicationMenu(menu);
 }
 
-function initAutoUpdate() {
-  autoUpdater.logger = require("electron-log")
-  autoUpdater.autoDownload = false;
+function getGitHubConfig(): { owner: string; repo: string } | null {
+  try {
+    const packageJsonPath = path.join(__dirname, '../../package.json');
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+    
+    const publish = packageJson.build?.publish?.[0];
+    if (publish?.provider === 'github' && publish.owner && publish.repo) {
+      return {
+        owner: publish.owner,
+        repo: publish.repo
+      };
+    }
+  } catch (error) {
+    console.error('Failed to read GitHub config from package.json:', error);
+  }
+  return null;
+}
 
-  autoUpdater.on("checking-for-update", () => {
-    console.log("Checking for updates...");
+function setTaskbarProgress(value: number) {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (!win.isDestroyed()) {
+      win.setProgressBar(value);
+    }
   });
+}
 
-  autoUpdater.on("update-not-available", (info) => {
-    console.log("Update not available:", info);
+function initAutoUpdate() {
+  const githubConfig = getGitHubConfig();
+  // Updater activity is written to the electron-log file (see the log location in README)
+  autoUpdater.logger = log;
+  autoUpdater.autoDownload = false;
+  // Only needed to test updates from an unpackaged dev run
+  autoUpdater.forceDevUpdateConfig = !app.isPackaged;
+  autoUpdater.allowPrerelease = true;
+
+  updateController = new UpdateController(autoUpdater, {
+    broadcast: (channel, payload) => windowManager.broadcast(channel, payload),
+    setTaskbarProgress,
+    logInfo: (message) => log.info(message),
+    logError: (message, error) => log.error(message, error)
   });
 
   autoUpdater.on("update-available", (info) => {
-    console.log("Update available:", info);
+    updateController.setAvailableVersion(info.version);
 
-    dialog.showMessageBox({
-      type: "info",
-      title: "Update Available",
-      message: "A new version is available. Do you want to download it now?",
-      buttons: ["Yes", "No"],
-      defaultId: 0,
-      cancelId: 1
-    }).then((result) => {
-      if (result.response === 0) {
-        console.log("User chose to download update");
-        autoUpdater.downloadUpdate();
+    // Construct GitHub release URL
+    let githubReleaseUrl = '';
+    if (githubConfig) {
+      githubReleaseUrl = `https://github.com/${githubConfig.owner}/${githubConfig.repo}/releases/tag/v${info.version}`;
+    }
 
-        dialog.showMessageBox({
-          type: "info",
-          title: "Downloading Update",
-          message: "Downloading the update. Please wait...",
-          buttons: ["OK"]
-        });
-      }
-    }).catch(err => {
-      console.error("Error showing update dialog:", err);
+    windowManager.broadcastUpdateAvailable({
+      version: info.version,
+      releaseNotes: info.releaseNotes || '',
+      releaseDate: info.releaseDate || '',
+      githubReleaseUrl: githubReleaseUrl
     });
   });
 
-  autoUpdater.on("download-progress", (progressObj) => {
-    // Tính toán các thông số
-    const percent = progressObj.percent.toFixed(2);
-    const downloadedMB = (progressObj.transferred / 1024 / 1024).toFixed(2);
-    const totalMB = (progressObj.total / 1024 / 1024).toFixed(2);
-    const speedMBps = (progressObj.bytesPerSecond / 1024 / 1024).toFixed(2);
-    
-    // Log chi tiết ra console
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`📥 Đang tải xuống cập nhật: ${percent}%`);
-    console.log(`📊 Tiến trình: ${downloadedMB}MB / ${totalMB}MB`);
-    console.log(`⚡ Tốc độ: ${speedMBps} MB/s`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    
-    // Hiển thị progress bar trên taskbar
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setProgressBar(progressObj.percent / 100);
-      mainWindow.setTitle(`Đang tải cập nhật... ${percent}%`);
-      
-      // Gửi tiến trình tới renderer process
-      mainWindow.webContents.send('update-download-progress', {
-        percent: parseFloat(percent),
-        downloadedMB: parseFloat(downloadedMB),
-        totalMB: parseFloat(totalMB),
-        speedMBps: parseFloat(speedMBps),
-        bytesPerSecond: progressObj.bytesPerSecond,
-        transferred: progressObj.transferred,
-        total: progressObj.total
-      });
-    }
-  });
+  autoUpdater.on('download-progress', (progress) => updateController.onDownloadProgress(progress));
+  autoUpdater.on('update-downloaded', (info) => updateController.onDownloaded(info.version));
+  autoUpdater.on('error', (error) => updateController.onError(error));
 
-  autoUpdater.on("update-downloaded", () => {
-    const result = dialog.showMessageBoxSync({
-      type: "question",
-      title: "Install Update",
-      message: "Update downloaded. Install and restart now?",
-      buttons: ["Yes", "Later"]
-    });
+  // Renderer asks to download the version announced by update-available
+  ipcMain.handle('start-update-download', () => updateController.startDownload());
 
-    if (result === 0) {
-      autoUpdater.quitAndInstall();
-    }
-  });
+  checkForUpdates();
+}
 
-  autoUpdater.on("error", (error) => {
-    console.error("Auto update error:", error);
-  });
-
-  autoUpdater.checkForUpdates();
+function checkForUpdates() {
+  updateController.checkForUpdates();
 }
 
 app.whenReady().then(() => {
@@ -151,7 +137,7 @@ app.whenReady().then(() => {
   registerIpcHandlers(windowManager);
   createMenu();
   
-  mainWindow = windowManager.createWindow();
+  windowManager.createWindow();
 
   initAutoUpdate();
 
@@ -162,9 +148,11 @@ app.whenReady().then(() => {
   });
 
   // Check for updates every 4 hours
-  setInterval(() => {
-    autoUpdater.checkForUpdates();
-  }, 4 * 60 * 60 * 1000);
+  updateCheckTimer = setInterval(checkForUpdates, 4 * 60 * 60 * 1000);
+});
+
+app.on('will-quit', () => {
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
 });
 
 app.on('window-all-closed', () => {

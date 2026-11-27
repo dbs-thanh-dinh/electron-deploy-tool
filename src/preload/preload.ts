@@ -1,34 +1,49 @@
 import { contextBridge, ipcRenderer } from 'electron';
+// `import type` is erased at compile time (preload runs sandboxed and cannot require main-process modules)
+import type { ConfigI, UpdateInfoI, UpdateDownloadStartedI, UpdateDownloadProgressI, UpdateDownloadedI, UpdateErrorI } from '../main/interface';
+import type { DeployOptions } from '../main/deploy-service';
+import type { DeployStepEventI } from '../main/deploy-steps';
+
+interface ConfirmDialogOptionsI {
+  title: string;
+  message: string;
+  detail?: string;
+}
 
 // Expose protected methods that allow the renderer process to use
 // ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('api', {
-  // ===== Auto Update APIs =====
-  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
-  
-  // Auto update event listeners
-  onUpdateDownloadStarted: (callback: (data: any) => void) => {
+  // App info
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
+  // Update operations
+  onUpdateAvailable: (callback: (data: UpdateInfoI) => void) => {
+    ipcRenderer.on('update-available', (_event, data) => callback(data));
+  },
+  startUpdateDownload: () => ipcRenderer.invoke('start-update-download'),
+  onUpdateDownloadStarted: (callback: (data: UpdateDownloadStartedI) => void) => {
     ipcRenderer.on('update-download-started', (_event, data) => callback(data));
   },
-  onUpdateDownloadProgress: (callback: (data: any) => void) => {
+  onUpdateDownloadProgress: (callback: (data: UpdateDownloadProgressI) => void) => {
     ipcRenderer.on('update-download-progress', (_event, data) => callback(data));
   },
-  onUpdateDownloaded: (callback: (data: any) => void) => {
+  onUpdateDownloaded: (callback: (data: UpdateDownloadedI) => void) => {
     ipcRenderer.on('update-downloaded', (_event, data) => callback(data));
   },
-  onUpdateError: (callback: (data: any) => void) => {
+  onUpdateError: (callback: (data: UpdateErrorI) => void) => {
     ipcRenderer.on('update-error', (_event, data) => callback(data));
   },
 
   // Config operations
   loadConfig: () => ipcRenderer.invoke('load-config'),
-  saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
+  saveConfig: (config: ConfigI) => ipcRenderer.invoke('save-config', config),
   
   // Deploy operations
   canDeploy: (projectName: string) => ipcRenderer.invoke('can-deploy', projectName),
   getActiveDeployments: () => ipcRenderer.invoke('get-active-deployments'),
-  startDeploy: (options: any) => ipcRenderer.invoke('start-deploy', options),
-  
+  startDeploy: (options: DeployOptions) => ipcRenderer.invoke('start-deploy', options),
+  cancelDeploy: () => ipcRenderer.invoke('cancel-deploy'),
+
   // Log operations
   getLogDir: () => ipcRenderer.invoke('get-log-dir'),
   getLogFiles: () => ipcRenderer.invoke('get-log-files'),
@@ -36,6 +51,7 @@ contextBridge.exposeInMainWorld('api', {
   
   // Git operations
   getBranches: (repoPath: string) => ipcRenderer.invoke('get-branches', repoPath),
+  cancelGetBranches: () => ipcRenderer.invoke('cancel-get-branches'),
 
   // Notifications
   showNotification: (title: string, body: string) => {
@@ -49,6 +65,18 @@ contextBridge.exposeInMainWorld('api', {
     });
   },
   
+  onDeployLog: (callback: (line: string) => void) => {
+    ipcRenderer.on('deploy-log', (event, line: string) => {
+      callback(line);
+    });
+  },
+
+  onDeployStep: (callback: (event: DeployStepEventI) => void) => {
+    ipcRenderer.on('deploy-step', (_event, stepEvent: DeployStepEventI) => {
+      callback(stepEvent);
+    });
+  },
+
   onConfigUpdated: (callback: () => void) => {
     ipcRenderer.on('config-updated', () => {
       callback();
@@ -62,8 +90,11 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   // Dialog operations
-  openDialogConfirm: (options: any) => ipcRenderer.invoke('open-dialog-confirm', options),
+  openDialogConfirm: (options: ConfirmDialogOptionsI) => ipcRenderer.invoke('open-dialog-confirm', options),
 
   // File system
   openDirectoryDialog: () => ipcRenderer.invoke('open-directory-dialog'),
+
+  // Holidays
+  loadHolidaysConfig: () => ipcRenderer.invoke('load-holidays-config'),
 });
