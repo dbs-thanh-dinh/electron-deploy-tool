@@ -1337,7 +1337,12 @@ describe('startup wiring and handleDeploy', () => {
     expect(env.api.onConfigUpdated).toHaveBeenCalledTimes(1);
     expect(env.api.onDeploymentStatusChanged).toHaveBeenCalledTimes(1);
     expect(Array.from(byId<HTMLSelectElement>(env, 'projectSelect').options).map((o) => o.value)).toEqual(['', 'P', 'Q']);
-    expect(env.document.querySelector('.app-version')!.textContent).toBe('1.0.0');
+    const versionEls = Array.from(env.document.querySelectorAll('.app-version'));
+    expect(versionEls.length).toBeGreaterThan(1);
+    expect(versionEls.every((el) => el.textContent === '1.0.0')).toBe(true);
+    const sidebarMeta = env.document.querySelector('.sidebar-header .sidebar-meta')!;
+    expect(sidebarMeta.textContent).toContain('1.0.0');
+    expect(sidebarMeta.textContent).toContain('Thanhdc');
   });
 
   it('streamed lines reach the log only while a deploy started from this window runs', async () => {

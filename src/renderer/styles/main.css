@@ -36,6 +36,12 @@ body {
   font-weight: 600;
 }
 
+.sidebar-header .sidebar-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .sidebar-nav {
   flex: 1;
   padding: 10px;
