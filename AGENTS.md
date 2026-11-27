@@ -147,4 +147,4 @@ Theo quy ước global của chủ dự án (ThanhDC):
 - Nhánh chính `main`; không push trực tiếp lên `main`/`master` — làm trên nhánh `feature/*`, `release/*` rồi tạo PR.
 - Commit theo Conventional Commits (`feat:`, `fix:`, `chore:`…). **Không** thêm `Co-Authored-By` hay trailer ghi công AI/“Generated with…” vào commit message và mô tả PR.
 - Trước khi tạo PR: chạy `npm run typecheck`, `npm test` và `npm run lint` (`npx tsc --noEmit` một mình không kiểm tra `tests/`), và đảm bảo mọi thay đổi logic đã có unit test bao phủ (xem mục "Unit test bắt buộc cho mọi thay đổi logic").
-- Release: bump `version` trong `package.json` (commit `chore: bump version to x.y.z`), build bằng `npm run dist`, publish lên GitHub Releases (`dbs-thanhdc/electron-deploy-tool`) để `electron-updater` phát hiện.
+- Release: bump `version` trong `package.json` (commit `chore: bump version to x.y.z`), build bằng `npm run dist`, publish lên GitHub Releases (`dbs-thanh-dinh/electron-deploy-tool`) để `electron-updater` phát hiện.

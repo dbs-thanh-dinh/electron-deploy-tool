@@ -26,7 +26,7 @@
 ## Cài đặt & chạy (phát triển)
 
 ```bash
-git clone https://github.com/dbs-thanhdc/electron-deploy-tool.git
+git clone https://github.com/dbs-thanh-dinh/electron-deploy-tool.git
 cd electron-deploy-tool
 npm install
 npm start          # build TypeScript + copy html/css, rồi chạy Electron
@@ -172,7 +172,7 @@ Cấu hình trong [`extra/holidays-config.json`](extra/holidays-config.json). M�
 npm run dist        # kết quả nằm trong release/
 ```
 
-Sau đó tạo GitHub Release với tag `vX.Y.Z` tại repo `dbs-thanhdc/electron-deploy-tool` và tải file cài đặt lên. Các bản đã cài sẽ tự phát hiện phiên bản mới qua `electron-updater` và hiện thông báo kèm link tới release.
+Sau đó tạo GitHub Release với tag `vX.Y.Z` tại repo `dbs-thanh-dinh/electron-deploy-tool` và tải file cài đặt lên. Các bản đã cài sẽ tự phát hiện phiên bản mới qua `electron-updater` và hiện thông báo kèm link tới release.
 
 ## Cấu trúc thư mục
 

@@ -23,7 +23,7 @@
     "email": "thanh.dinh@deltabrains.vn",
     "url": "https://github.com/dbs-thanhdc"
   },
-  "homepage": "https://github.com/dbs-thanhdc/electron-deploy-tool",
+  "homepage": "https://github.com/dbs-thanh-dinh/electron-deploy-tool",
   "license": "MIT",
   "engines": {
     "node": "^20.19.0 || ^22.13.0 || >=24.0.0"
@@ -54,7 +54,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "dbs-thanhdc",
+        "owner": "dbs-thanh-dinh",
         "repo": "electron-deploy-tool"
       }
     ],
@@ -68,12 +68,14 @@
       "legalTrademarks": "Deploy Tool © ThanhDC"
     },
     "msi": {
+      "artifactName": "Deploy-Tool-${version}.${ext}",
       "oneClick": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Deploy Tool"
     },
     "nsis": {
+      "artifactName": "Deploy-Tool-Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
