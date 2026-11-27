@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('update-available', (_event, data) => callback(data));
   },
   startUpdateDownload: () => ipcRenderer.invoke('start-update-download'),
+  openReleasePage: (url: string) => ipcRenderer.invoke('open-release-page', url),
   onUpdateDownloadStarted: (callback: (data: UpdateDownloadStartedI) => void) => {
     ipcRenderer.on('update-download-started', (_event, data) => callback(data));
   },

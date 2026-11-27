@@ -1332,3 +1332,19 @@ input:checked + .toggle-slider:before {
   word-wrap: break-word;
 }
 
+.update-manual-hint {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 15px;
+}
+
+.update-error-detail {
+  color: var(--text-secondary);
+  font-family: monospace;
+  font-size: 12px;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+

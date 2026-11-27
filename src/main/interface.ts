@@ -36,6 +36,11 @@ export interface UpdateDownloadProgressI {
 export interface UpdateDownloadedI {
   version: string;
 }
+export type UpdateErrorKind = 'signature' | 'download' | 'network' | 'unknown';
 export interface UpdateErrorI {
+  kind: UpdateErrorKind;
+  // User-facing message, in Vietnamese
   message: string;
+  // Raw error text, shown as technical detail
+  detail: string;
 }

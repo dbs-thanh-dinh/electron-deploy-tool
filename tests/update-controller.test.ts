@@ -76,7 +76,7 @@ describe('startDownload', () => {
     controller.startDownload();
     await flush();
 
-    expect(sink.broadcast).toHaveBeenLastCalledWith('update-error', { message: 'silent failure' });
+    expect(sink.broadcast).toHaveBeenLastCalledWith('update-error', expect.objectContaining({ kind: 'unknown', detail: 'silent failure' }));
     expect(controller.isDownloading()).toBe(false);
   });
 
@@ -131,7 +131,7 @@ describe('onError', () => {
 
     expect(sink.logError).toHaveBeenCalledWith('Auto update failed', expect.any(Error));
     expect(sink.setTaskbarProgress).toHaveBeenLastCalledWith(-1);
-    expect(sink.broadcast).toHaveBeenLastCalledWith('update-error', { message: 'ECONNRESET' });
+    expect(sink.broadcast).toHaveBeenLastCalledWith('update-error', expect.objectContaining({ kind: 'network', detail: 'ECONNRESET' }));
     expect(controller.isDownloading()).toBe(false);
   });
 

@@ -34,6 +34,8 @@ interface Window {
     // Update operations
     onUpdateAvailable: (callback: (data: UpdateInfoI) => void) => void;
     startUpdateDownload: () => Promise<void>;
+    // Resolves false when the URL is not a release page of this repository
+    openReleasePage: (url: string) => Promise<boolean>;
     onUpdateDownloadStarted: (callback: (data: UpdateDownloadStartedI) => void) => void;
     onUpdateDownloadProgress: (callback: (data: UpdateDownloadProgressI) => void) => void;
     onUpdateDownloaded: (callback: (data: UpdateDownloadedI) => void) => void;

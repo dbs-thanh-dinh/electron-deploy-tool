@@ -452,6 +452,8 @@
       <div class="update-success-message">
         <h3>✅ Download Complete!</h3>
         <p id="updateSuccessVersion">The new version is ready to install.</p>
+        <p class="update-manual-hint">Nếu ứng dụng không tự cài đặt được khi đóng, bạn có thể tải và cài thủ công từ trang phát hành.</p>
+        <button id="openReleasePageFromSuccessBtn" class="btn btn-secondary">Mở trang tải về</button>
         <button id="closeSuccessBtn" class="btn btn-primary">Close</button>
       </div>
     </div>
@@ -463,6 +465,9 @@
       <div class="update-error-message">
         <h3>❌ Update Error</h3>
         <p id="updateErrorMessage">An error occurred while downloading the update.</p>
+        <p id="updateErrorGuide" class="update-manual-hint"></p>
+        <p id="updateErrorDetail" class="update-error-detail"></p>
+        <button id="openReleasePageFromErrorBtn" class="btn btn-secondary">Mở trang tải về</button>
         <button id="closeErrorBtn" class="btn btn-primary">Close</button>
       </div>
     </div>

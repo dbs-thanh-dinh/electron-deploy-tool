@@ -1268,8 +1268,10 @@ function initAutoUpdateHandlers() {
   const viewReleaseNotesBtn = document.getElementById('viewReleaseNotesBtn') as HTMLButtonElement;
   const closeUpdatePopupBtn = document.getElementById('closeUpdatePopupBtn') as HTMLButtonElement;
   const downloadNowBtn = document.getElementById('downloadNowBtn') as HTMLButtonElement;
+  // Release page of the version shown in the popup, used by the manual-install buttons
+  let latestReleaseUrl = '';
 
-  initUpdateDownloadHandlers();
+  initUpdateDownloadHandlers(() => latestReleaseUrl);
 
   // Listen for update available event from main process
   window.api.onUpdateAvailable?.((data) => {
@@ -1284,6 +1286,7 @@ function initAutoUpdateHandlers() {
 
   function showUpdateAvailablePopup(info: UpdateInfoI) {
     updateAvailablePopup.style.display = 'flex';
+    latestReleaseUrl = info.githubReleaseUrl || '';
     
     // Update version info
     const latestVersionText = document.getElementById('latestVersionText') as HTMLElement;
@@ -1333,10 +1336,26 @@ function initAutoUpdateHandlers() {
   });
 }
 // ===== UPDATE DOWNLOAD PROGRESS =====
-function initUpdateDownloadHandlers() {
+// Hint shown in the error modal, by what kind of failure happened
+function updateErrorGuideText(kind: UpdateErrorI['kind']): string {
+  switch (kind) {
+    case 'signature':
+      return 'Bản này chưa được ký số nên không tự cài đặt được. Bấm nút bên dưới để mở trang phát hành, tải file Deploy-Tool-Setup-<phiên bản>.exe (không dùng file .msi) và chạy file đó để cài đè. Cấu hình của ứng dụng được giữ nguyên.';
+    case 'network':
+      return 'Thử lại khi có mạng, hoặc tải file cài đặt thủ công từ trang phát hành.';
+    case 'download':
+    case 'unknown':
+    default:
+      return 'Bạn có thể tải file cài đặt thủ công từ trang phát hành.';
+  }
+}
+
+function initUpdateDownloadHandlers(getReleaseUrl: () => string) {
   const updateModal = document.getElementById('updateModal') as HTMLDivElement;
   const updateSuccessModal = document.getElementById('updateSuccessModal') as HTMLDivElement;
   const updateErrorModal = document.getElementById('updateErrorModal') as HTMLDivElement;
+  const openReleasePageFromSuccessBtn = document.getElementById('openReleasePageFromSuccessBtn') as HTMLButtonElement;
+  const openReleasePageFromErrorBtn = document.getElementById('openReleasePageFromErrorBtn') as HTMLButtonElement;
   const closeSuccessBtn = document.getElementById('closeSuccessBtn') as HTMLButtonElement;
   const closeErrorBtn = document.getElementById('closeErrorBtn') as HTMLButtonElement;
 
@@ -1391,6 +1410,13 @@ function initUpdateDownloadHandlers() {
 
     const errorMessage = document.getElementById('updateErrorMessage') as HTMLParagraphElement;
     errorMessage.textContent = data.message || 'Đã xảy ra lỗi không xác định khi tải xuống cập nhật.';
+
+    const errorGuide = document.getElementById('updateErrorGuide') as HTMLParagraphElement;
+    errorGuide.textContent = updateErrorGuideText(data.kind);
+
+    const errorDetail = document.getElementById('updateErrorDetail') as HTMLParagraphElement;
+    errorDetail.textContent = data.detail ? `Chi tiết kỹ thuật: ${data.detail}` : '';
+    errorDetail.style.display = data.detail ? 'block' : 'none';
   });
 
   closeSuccessBtn.addEventListener('click', () => {
@@ -1399,5 +1425,13 @@ function initUpdateDownloadHandlers() {
 
   closeErrorBtn.addEventListener('click', () => {
     updateErrorModal.style.display = 'none';
+  });
+
+  // Manual install: open the release page; the main process rejects any URL that is not this repository's release page
+  openReleasePageFromErrorBtn.addEventListener('click', () => {
+    void window.api.openReleasePage(getReleaseUrl());
+  });
+  openReleasePageFromSuccessBtn.addEventListener('click', () => {
+    void window.api.openReleasePage(getReleaseUrl());
   });
 }

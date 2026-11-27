@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, Notification } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Notification, shell } from 'electron';
 import { WindowManager } from './window-manager';
 import { registerIpcHandlers } from './ipc-handlers';
 import path from 'node:path';
@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log/main';
 import { UpdateController } from './update-controller';
+import { isReleasePageUrl } from './update-utils';
 
 let windowManager: WindowManager;
 let updateCheckTimer: NodeJS.Timeout | undefined;
@@ -124,6 +125,22 @@ function initAutoUpdate() {
 
   // Renderer asks to download the version announced by update-available
   ipcMain.handle('start-update-download', () => updateController.startDownload());
+
+  // Opens the release page so the user can install manually; only this repository's release pages are allowed
+  ipcMain.handle('open-release-page', async (_event, url: unknown) => {
+    const githubConfig = getGitHubConfig();
+    if (!githubConfig || !isReleasePageUrl(url, githubConfig.owner, githubConfig.repo)) {
+      log.warn('Rejected open-release-page request for an unexpected URL');
+      return false;
+    }
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch (error) {
+      log.error('Failed to open release page', error);
+      return false;
+    }
+  });
 
   checkForUpdates();
 }

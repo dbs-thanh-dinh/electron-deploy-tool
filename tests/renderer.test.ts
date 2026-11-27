@@ -163,6 +163,7 @@ async function createEnv(): Promise<EnvI> {
     getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
     onUpdateAvailable: vi.fn(),
     startUpdateDownload: vi.fn(),
+    openReleasePage: vi.fn().mockResolvedValue(true),
     onUpdateDownloadStarted: vi.fn(),
     onUpdateDownloadProgress: vi.fn(),
     onUpdateDownloaded: vi.fn(),
@@ -1541,5 +1542,49 @@ describe('update download modal', () => {
 
     onError({ message: '' });
     expect(byId(env, 'updateErrorMessage').textContent).toBe('Đã xảy ra lỗi không xác định khi tải xuống cập nhật.');
+  });
+
+  it('explains how to install manually for an unsigned build and shows the technical detail', async () => {
+    const env = await createEnv();
+    await env.init();
+    const onError = env.api.onUpdateError.mock.calls[0][0] as (data: { kind: string; message: string; detail: string }) => void;
+    byId(env, 'updateModal').style.display = 'flex';
+
+    onError({ kind: 'signature', message: 'Bản cập nhật chưa được ký số', detail: 'not signed by the application owner' });
+
+    expect(byId(env, 'updateErrorModal').style.display).toBe('flex');
+    expect(byId(env, 'updateErrorGuide').textContent).toContain('cài đè');
+    expect(byId(env, 'updateErrorDetail').style.display).toBe('block');
+    expect(byId(env, 'updateErrorDetail').textContent).toBe('Chi tiết kỹ thuật: not signed by the application owner');
+  });
+
+  it('hides the technical detail when there is none', async () => {
+    const env = await createEnv();
+    await env.init();
+    const onError = env.api.onUpdateError.mock.calls[0][0] as (data: { kind: string; message: string; detail: string }) => void;
+
+    onError({ kind: 'network', message: 'Không kết nối được tới GitHub.', detail: '' });
+
+    expect(byId(env, 'updateErrorGuide').textContent).toContain('Thử lại khi có mạng');
+    expect(byId(env, 'updateErrorDetail').style.display).toBe('none');
+  });
+
+  it('opens the release page of the version shown in the popup from the error and success modals', async () => {
+    const env = await createEnv();
+    await env.init();
+    const onAvailable = env.api.onUpdateAvailable.mock.calls[0][0] as (info: { version: string; githubReleaseUrl: string }) => void;
+    const onError = env.api.onUpdateError.mock.calls[0][0] as (data: { kind: string; message: string; detail: string }) => void;
+    const onDownloaded = env.api.onUpdateDownloaded.mock.calls[0][0] as (data: { version: string }) => void;
+    const url = 'https://github.com/dbs-thanh-dinh/electron-deploy-tool/releases/tag/v1.4.0-beta.1';
+
+    onAvailable({ version: '1.4.0-beta.1', githubReleaseUrl: url });
+    onError({ kind: 'download', message: 'Không tìm thấy file', detail: '' });
+    byId(env, 'openReleasePageFromErrorBtn').click();
+    expect(env.api.openReleasePage).toHaveBeenLastCalledWith(url);
+
+    onDownloaded({ version: '1.4.0-beta.1' });
+    byId(env, 'openReleasePageFromSuccessBtn').click();
+    expect(env.api.openReleasePage).toHaveBeenLastCalledWith(url);
+    expect(env.api.openReleasePage).toHaveBeenCalledTimes(2);
   });
 });

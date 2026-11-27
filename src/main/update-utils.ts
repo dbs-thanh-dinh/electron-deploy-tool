@@ -1,5 +1,5 @@
 // Pure helpers for the update download flow. Must not import electron so it stays unit-testable.
-import type { UpdateDownloadProgressI } from './interface';
+import type { UpdateDownloadProgressI, UpdateErrorI } from './interface';
 
 const BYTES_PER_MB = 1024 * 1024;
 
@@ -40,4 +40,47 @@ export function toUpdateErrorMessage(error: unknown): string {
     return error.message;
   }
   return 'Đã xảy ra lỗi không xác định khi tải xuống cập nhật.';
+}
+
+/**
+ * Maps an updater error to a kind and a user-facing message. Matching uses the text electron-updater produces:
+ * the unsigned-build check ("not signed by the application owner") and HTTP failures ("Cannot download ... status 404").
+ */
+export function classifyUpdateError(error: unknown): UpdateErrorI {
+  const detail = error instanceof Error ? error.message : error == null ? '' : String(error);
+
+  const code = error instanceof Error ? (error as Error & { code?: string }).code : undefined;
+  if (code === 'ERR_UPDATER_INVALID_SIGNATURE' || /not signed by the application owner/i.test(detail)) {
+    return {
+      kind: 'signature',
+      message: 'Bản cập nhật chưa được ký số nên Windows không cho phép tự động cài đặt.',
+      detail
+    };
+  }
+  if (/Cannot download .*status \d{3}/i.test(detail)) {
+    return {
+      kind: 'download',
+      message: 'Không tìm thấy hoặc không tải được file cài đặt trên GitHub Releases.',
+      detail
+    };
+  }
+  if (/ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ERR_INTERNET_DISCONNECTED|socket hang up/i.test(detail)) {
+    return {
+      kind: 'network',
+      message: 'Không kết nối được tới GitHub. Kiểm tra kết nối mạng rồi thử lại.',
+      detail
+    };
+  }
+  return {
+    kind: 'unknown',
+    message: toUpdateErrorMessage(error),
+    detail
+  };
+}
+
+/** True only for a release page of the given repository, so the renderer cannot make the app open arbitrary URLs. */
+export function isReleasePageUrl(url: unknown, owner: string, repo: string): url is string {
+  if (typeof url !== 'string' || !url.startsWith(`https://github.com/${owner}/${repo}/releases/`)) return false;
+  // Reject whitespace and control characters (code points below 0x20 and DEL)
+  return ![...url].some((ch) => /\s/.test(ch) || ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
 }

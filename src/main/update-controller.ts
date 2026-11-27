@@ -1,6 +1,6 @@
 // State machine for the in-app update download. Must not import electron so it stays unit-testable.
 import type { UpdateDownloadProgressI } from './interface';
-import { buildUpdateProgressPayload, toTaskbarProgress, toUpdateErrorMessage } from './update-utils';
+import { buildUpdateProgressPayload, classifyUpdateError, toTaskbarProgress } from './update-utils';
 
 /** The part of electron-updater's autoUpdater this controller uses. */
 export interface IUpdaterPort {
@@ -74,7 +74,7 @@ export class UpdateController {
     if (!this.downloading) return;
     this.downloading = false;
     this.sink.setTaskbarProgress(-1);
-    this.sink.broadcast('update-error', { message: toUpdateErrorMessage(error) });
+    this.sink.broadcast('update-error', classifyUpdateError(error));
   }
 
   isDownloading(): boolean {
